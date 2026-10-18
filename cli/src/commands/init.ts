@@ -141,10 +141,19 @@ export async function initCommand(options: InitOptions): Promise<void> {
       });
     }
 
-    if (result.skipped.length > 0) {
+    const alreadyInstalled = result.skipped.filter(p => !result.notManaged.includes(p));
+    if (alreadyInstalled.length > 0) {
       console.log();
       logger.info('Skipped (already exist, use --force to overwrite):');
-      result.skipped.forEach(path => {
+      alreadyInstalled.forEach(path => {
+        console.log(`  ${chalk.yellow('-')} ${path}`);
+      });
+    }
+
+    if (result.notManaged.length > 0) {
+      console.log();
+      logger.info('Skipped (not installed by uipro, left untouched even with --force):');
+      result.notManaged.forEach(path => {
         console.log(`  ${chalk.yellow('-')} ${path}`);
       });
     }

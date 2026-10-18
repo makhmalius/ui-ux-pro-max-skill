@@ -189,6 +189,33 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
+/** Marker written into every sub-skill dir uipro installs; never bundled in assets. */
+export const OWNER_MARKER = '.uipro-managed';
+
+/**
+ * True if uipro installed `targetDir`: it carries the ownership marker, or
+ * (legacy install that predates the marker) its SKILL.md is byte-identical to
+ * the bundled one. A user's own same-named skill is never managed.
+ */
+export async function isManagedSkill(targetDir: string, bundledSkillDir: string): Promise<boolean> {
+  if (!(await isDirectory(targetDir))) return false;
+  if (await exists(join(targetDir, OWNER_MARKER))) return true;
+  try {
+    const [installed, bundled] = await Promise.all([
+      readFile(join(targetDir, 'SKILL.md')),
+      readFile(join(bundledSkillDir, 'SKILL.md')),
+    ]);
+    return installed.equals(bundled);
+  } catch {
+    return false;
+  }
+}
+
+/** Bundled source directory of a sub-skill. */
+export function bundledSubSkillDir(name: string): string {
+  return join(ASSETS_DIR, 'skills', name);
+}
+
 /** One thing an install writes, and whether this run will write or skip it. */
 export interface InstallArtifact {
   kind: 'skill-file' | 'data' | 'scripts' | 'sub-skill';
@@ -197,6 +224,8 @@ export interface InstallArtifact {
   /** Source inside the bundled assets (absent for the rendered SKILL.md). */
   source?: string;
   action: 'write' | 'skip';
+  /** Why a skip happened: already installed, or a directory uipro does not own. */
+  skipReason?: 'exists' | 'not-managed';
 }
 
 /**
@@ -234,12 +263,20 @@ async function decideInstall(
 
   for (const name of await listBundledSubSkills()) {
     const path = join(paths.skillsParentDir, name);
-    artifacts.push({
-      kind: 'sub-skill',
-      path,
-      source: join(ASSETS_DIR, 'skills', name),
-      action: !force && (await exists(path)) ? 'skip' : 'write',
-    });
+    const source = bundledSubSkillDir(name);
+    let action: InstallArtifact['action'] = 'write';
+    let skipReason: InstallArtifact['skipReason'];
+    if (await exists(path)) {
+      // Never touch a same-named skill uipro did not install, even with --force.
+      if (!(await isManagedSkill(path, source))) {
+        action = 'skip';
+        skipReason = 'not-managed';
+      } else if (!force) {
+        action = 'skip';
+        skipReason = 'exists';
+      }
+    }
+    artifacts.push({ kind: 'sub-skill', path, source, action, skipReason });
   }
 
   return { artifacts, paths };
@@ -307,6 +344,8 @@ export interface InstallResult {
   folders: string[];
   /** Paths that already existed and were left untouched. */
   skipped: string[];
+  /** Subset of `skipped`: existing directories uipro did not install and never touches. */
+  notManaged: string[];
 }
 
 export interface InstallAllResult extends InstallResult {
@@ -331,6 +370,7 @@ export async function generatePlatformFiles(
   const config = await loadPlatformConfig(aiType);
   const { artifacts, paths } = await decideInstall(config, targetDir, isGlobal, force);
   const skipped = artifacts.filter(a => a.action === 'skip').map(a => a.path);
+  const notManaged = artifacts.filter(a => a.skipReason === 'not-managed').map(a => a.path);
   const toWrite = artifacts.filter(a => a.action === 'write');
 
   // Create directory structure
@@ -346,9 +386,16 @@ export async function generatePlatformFiles(
     await ensureCleanDir(artifact.path);
     await mkdir(artifact.path, { recursive: true });
     await cp(artifact.source!, artifact.path, { recursive: true });
+    if (artifact.kind === 'sub-skill') {
+      await writeFile(join(artifact.path, OWNER_MARKER), 'installed by uipro-cli\n', 'utf-8');
+    }
   }
 
-  return { folders: toWrite.length > 0 ? [config.folderStructure.root] : [], skipped };
+  return {
+    folders: toWrite.length > 0 ? [config.folderStructure.root] : [],
+    skipped,
+    notManaged,
+  };
 }
 
 /**
@@ -364,11 +411,12 @@ export async function planPlatformInstallActions(
   const config = await loadPlatformConfig(aiType);
   const { artifacts } = await decideInstall(config, targetDir, isGlobal, force);
 
-  return artifacts.map(a =>
-    a.action === 'skip'
+  return artifacts.map(a => {
+    if (a.skipReason === 'not-managed') return `Would skip (not installed by uipro): ${a.path}`;
+    return a.action === 'skip'
       ? `Would skip (exists, use --force): ${a.path}`
-      : `Would write: ${a.path}`
-  );
+      : `Would write: ${a.path}`;
+  });
 }
 
 export interface PlanAllResult {
@@ -421,6 +469,7 @@ export async function generateAllPlatformFiles(
 ): Promise<InstallAllResult> {
   const allFolders = new Set<string>();
   const allSkipped = new Set<string>();
+  const allNotManaged = new Set<string>();
   const failures: { aiType: string; error: string }[] = [];
   const generatedSkillFiles = new Set<string>();
 
@@ -438,6 +487,7 @@ export async function generateAllPlatformFiles(
       generatedSkillFiles.add(skillFile);
       result.folders.forEach(f => allFolders.add(f));
       result.skipped.forEach(p => allSkipped.add(p));
+      result.notManaged.forEach(p => allNotManaged.add(p));
     } catch (error) {
       failures.push({
         aiType,
@@ -446,7 +496,10 @@ export async function generateAllPlatformFiles(
     }
   }
 
-  return { folders: Array.from(allFolders), skipped: Array.from(allSkipped), failures };
+  return { folders: Array.from(allFolders), skipped: Array.from(allSkipped),
+    notManaged: Array.from(allNotManaged),
+    failures,
+  };
 }
 
 /**

@@ -7,7 +7,7 @@ import prompts from 'prompts';
 import type { AIType, ConcreteAIType } from '../types/index.js';
 import { AI_TYPES, AI_FOLDERS } from '../types/index.js';
 import { detectAIType, getAITypeDescription } from '../utils/detect.js';
-import { listBundledSubSkills, loadPlatformConfig } from '../utils/template.js';
+import { bundledSubSkillDir, isManagedSkill, listBundledSubSkills, loadPlatformConfig } from '../utils/template.js';
 import { logger } from '../utils/logger.js';
 
 interface UninstallOptions {
@@ -15,11 +15,20 @@ interface UninstallOptions {
   global?: boolean;
 }
 
+interface RemovalPlan {
+  /** Standalone skill files and directories that will be removed, as absolute paths. */
+  targets: { abs: string; label: string }[];
+  /** Existing sub-skill directories uipro did not install; never removed. */
+  kept: string[];
+}
+
 /**
- * Remove skill directory for a given AI type
+ * Work out what removing the skill for an AI type would delete. The
+ * orchestrator dir (uipro's own name) is removed unconditionally; a
+ * sub-skill dir only if uipro installed it (marker or identical legacy copy).
  */
-async function removeSkillDir(baseDir: string, aiType: ConcreteAIType): Promise<string[]> {
-  const removed: string[] = [];
+async function planRemoval(baseDir: string, aiType: ConcreteAIType): Promise<RemovalPlan> {
+  const plan: RemovalPlan = { targets: [], kept: [] };
 
   // The orchestrator plus the bundled sibling sub-skills installed by init.
   const skillNames = ['ui-ux-pro-max', ...(await listBundledSubSkills())];
@@ -51,30 +60,43 @@ async function removeSkillDir(baseDir: string, aiType: ConcreteAIType): Promise<
 
   for (const skillFile of skillFiles) {
     const filePath = join(baseDir, skillFile);
-    try {
-      await stat(filePath);
-      await rm(filePath, { force: true });
-      removed.push(skillFile.replaceAll('\\', '/'));
-    } catch (err: unknown) {
-      // Skip non-existent files; re-throw permission or other errors
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    if (await pathExists(filePath)) {
+      plan.targets.push({ abs: filePath, label: skillFile.replaceAll('\\', '/') });
     }
   }
 
   for (const parent of parents) {
     for (const name of skillNames) {
       const skillDir = join(baseDir, parent, name);
-      try {
-        await stat(skillDir);
-        await rm(skillDir, { recursive: true, force: true });
-        removed.push(`${parent.replaceAll('\\', '/')}/${name}`);
-      } catch (err: unknown) {
-        // Skip non-existent dirs; re-throw permission or other errors
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      if (!(await pathExists(skillDir))) continue;
+      if (name === 'ui-ux-pro-max' || (await isManagedSkill(skillDir, bundledSubSkillDir(name)))) {
+        plan.targets.push({ abs: skillDir, label: `${parent.replaceAll('\\', '/')}/${name}` });
+      } else {
+        plan.kept.push(skillDir);
       }
     }
   }
 
+  return plan;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (err: unknown) {
+    // Skip non-existent paths; re-throw permission or other errors
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    return false;
+  }
+}
+
+async function executeRemoval(plan: RemovalPlan): Promise<string[]> {
+  const removed: string[] = [];
+  for (const { abs, label } of plan.targets) {
+    await rm(abs, { recursive: true, force: true });
+    removed.push(label);
+  }
   return removed;
 }
 
@@ -122,11 +144,24 @@ export async function uninstallCommand(options: UninstallOptions): Promise<void>
     aiType = response.aiType as AIType;
   }
 
-  // Confirm before removing
+  const typesToRemove: ConcreteAIType[] =
+    aiType === 'all' ? initialDetected : [aiType as ConcreteAIType];
+  const plan: RemovalPlan = { targets: [], kept: [] };
+  for (const type of typesToRemove) {
+    const p = await planRemoval(baseDir, type);
+    plan.targets.push(...p.targets);
+    plan.kept.push(...p.kept);
+  }
+
+  const keptNote = plan.kept.length > 0
+    ? `\nKept (not installed by uipro):\n${plan.kept.map(p => `  ${p}`).join('\n')}\n`
+    : '';
+
+  // Confirm before removing, listing the exact paths
   const { confirmed } = await prompts({
     type: 'confirm',
     name: 'confirmed',
-    message: `Remove UI/UX Pro Max skill for ${chalk.cyan(getAITypeDescription(aiType))} from ${locationLabel}?`,
+    message: `Remove UI/UX Pro Max skill for ${chalk.cyan(getAITypeDescription(aiType))} from ${locationLabel}?\nWill remove:\n${plan.targets.map(t => `  ${t.abs}`).join('\n')}\n${keptNote}`,
     initial: false,
   });
 
@@ -138,18 +173,7 @@ export async function uninstallCommand(options: UninstallOptions): Promise<void>
   const spinner = ora('Removing skill files...').start();
 
   try {
-    const allRemoved: string[] = [];
-
-    if (aiType === 'all') {
-      // Remove for all detected platforms
-      for (const type of initialDetected) {
-        const removed = await removeSkillDir(baseDir, type);
-        allRemoved.push(...removed);
-      }
-    } else {
-      const removed = await removeSkillDir(baseDir, aiType);
-      allRemoved.push(...removed);
-    }
+    const allRemoved = await executeRemoval(plan);
 
     if (allRemoved.length === 0) {
       spinner.warn('No skill files found to remove');
