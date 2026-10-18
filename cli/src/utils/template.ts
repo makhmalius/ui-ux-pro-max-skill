@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
 import { readFile, mkdir, writeFile, cp, access, readdir, lstat, rm } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
+import { join, dirname, basename } from 'node:path';
+import { LEGACY_SKILL_HASHES } from './legacy-skill-hashes.js';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
@@ -192,20 +194,26 @@ async function isDirectory(path: string): Promise<boolean> {
 /** Marker written into every sub-skill dir uipro installs; never bundled in assets. */
 export const OWNER_MARKER = '.uipro-managed';
 
+function hashSkillMd(content: Buffer): string {
+  return createHash('sha256').update(content.toString('utf-8').replace(/\r\n/g, '\n')).digest('hex');
+}
+
 /**
  * True if uipro installed `targetDir`: it carries the ownership marker, or
- * (legacy install that predates the marker) its SKILL.md is byte-identical to
- * the bundled one. A user's own same-named skill is never managed.
+ * (legacy install that predates the marker) its SKILL.md matches a SKILL.md
+ * uipro ever shipped for that sub-skill (closed set, CRLF-insensitive). A
+ * user's own same-named skill is never managed. `hashes` is injectable for tests.
  */
-export async function isManagedSkill(targetDir: string, bundledSkillDir: string): Promise<boolean> {
+export async function isManagedSkill(
+  targetDir: string,
+  bundledSkillDir: string,
+  hashes: Record<string, string[]> = LEGACY_SKILL_HASHES
+): Promise<boolean> {
   if (!(await isDirectory(targetDir))) return false;
   if (await exists(join(targetDir, OWNER_MARKER))) return true;
   try {
-    const [installed, bundled] = await Promise.all([
-      readFile(join(targetDir, 'SKILL.md')),
-      readFile(join(bundledSkillDir, 'SKILL.md')),
-    ]);
-    return installed.equals(bundled);
+    const known = hashes[basename(bundledSkillDir)] ?? [];
+    return known.includes(hashSkillMd(await readFile(join(targetDir, 'SKILL.md'))));
   } catch {
     return false;
   }
@@ -225,7 +233,7 @@ export interface InstallArtifact {
   source?: string;
   action: 'write' | 'skip';
   /** Why a skip happened: already installed, or a directory uipro does not own. */
-  skipReason?: 'exists' | 'not-managed';
+  skipReason?: 'exists' | 'not-managed' | 'not-directory';
 }
 
 /**
@@ -270,7 +278,7 @@ async function decideInstall(
       // Never touch a same-named skill uipro did not install, even with --force.
       if (!(await isManagedSkill(path, source))) {
         action = 'skip';
-        skipReason = 'not-managed';
+        skipReason = (await isDirectory(path)) ? 'not-managed' : 'not-directory';
       } else if (!force) {
         action = 'skip';
         skipReason = 'exists';
@@ -370,7 +378,7 @@ export async function generatePlatformFiles(
   const config = await loadPlatformConfig(aiType);
   const { artifacts, paths } = await decideInstall(config, targetDir, isGlobal, force);
   const skipped = artifacts.filter(a => a.action === 'skip').map(a => a.path);
-  const notManaged = artifacts.filter(a => a.skipReason === 'not-managed').map(a => a.path);
+  const notManaged = artifacts.filter(a => (a.skipReason === 'not-managed' || a.skipReason === 'not-directory')).map(a => a.path);
   const toWrite = artifacts.filter(a => a.action === 'write');
 
   // Create directory structure
@@ -412,6 +420,9 @@ export async function planPlatformInstallActions(
   const { artifacts } = await decideInstall(config, targetDir, isGlobal, force);
 
   return artifacts.map(a => {
+    if (a.skipReason === 'not-directory') {
+      return `Would skip (not installed by uipro, not a directory): ${a.path}`;
+    }
     if (a.skipReason === 'not-managed') return `Would skip (not installed by uipro): ${a.path}`;
     return a.action === 'skip'
       ? `Would skip (exists, use --force): ${a.path}`

@@ -5,7 +5,7 @@ import { cp, mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { OWNER_MARKER, planPlatformInstallActions } from '../../src/utils/template.js';
+import { OWNER_MARKER, isManagedSkill, planPlatformInstallActions } from '../../src/utils/template.js';
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLI_ENTRY = join(CLI_ROOT, 'dist', 'index.js');
@@ -109,4 +109,97 @@ test('uninstall removes a legacy sub-skill (no marker, SKILL.md identical to the
   expect(result.status).toBe(0);
   expect(existsSync(legacy)).toBe(false);
   expect(result.output).toContain(legacy);
+});
+
+/** A previously shipped SKILL.md of `name` that differs from the current bundle, read from git history. */
+function previousSkillMd(name: string): string {
+  const path = `cli/assets/skills/${name}/SKILL.md`;
+  const repo = join(CLI_ROOT, '..');
+  const current = spawnSync('git', ['show', `HEAD:${path}`], { cwd: repo, encoding: 'utf-8' }).stdout;
+  const shas = spawnSync('git', ['log', '--format=%H', '--', path], { cwd: repo, encoding: 'utf-8' })
+    .stdout.split('\n').filter(Boolean);
+  for (const sha of shas) {
+    const old = spawnSync('git', ['show', `${sha}:${path}`], { cwd: repo, encoding: 'utf-8' });
+    if (old.status === 0 && old.stdout !== current) return old.stdout;
+  }
+  throw new Error(`no earlier version of ${path} in git history`);
+}
+
+async function installLegacy(scratch: string, name: string, skillMd: string): Promise<string> {
+  const dir = join(scratch, '.claude', 'skills', name);
+  await mkdir(join(scratch, '.claude', 'skills'), { recursive: true });
+  await cp(join(CLI_ROOT, 'assets', 'skills', name), dir, { recursive: true });
+  await writeFile(join(dir, 'SKILL.md'), skillMd);
+  return dir;
+}
+
+test('a legacy install of an OLDER released SKILL.md is still managed', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'uipro-own-old-'));
+  const dir = await installLegacy(scratch, 'design', previousSkillMd('design'));
+  expect(await isManagedSkill(dir, join(CLI_ROOT, 'assets', 'skills', 'design'))).toBe(true);
+  // CRLF checkout of an old release is the same release.
+  await writeFile(join(dir, 'SKILL.md'), previousSkillMd('design').replace(/\n/g, '\r\n'));
+  expect(await isManagedSkill(dir, join(CLI_ROOT, 'assets', 'skills', 'design'))).toBe(true);
+});
+
+test('uninstall removes, and init --force refreshes, a legacy install of an older SKILL.md', async () => {
+  const removeScratch = await mkdtemp(join(tmpdir(), 'uipro-own-old-rm-'));
+  const toRemove = await installLegacy(removeScratch, 'brand', previousSkillMd('brand'));
+  const un = runCli(removeScratch, ['uninstall', '--ai', 'claude'], 'y\n');
+  expect(un.status).toBe(0);
+  expect(existsSync(toRemove)).toBe(false);
+
+  const refreshScratch = await mkdtemp(join(tmpdir(), 'uipro-own-old-refresh-'));
+  const toRefresh = await installLegacy(refreshScratch, 'brand', previousSkillMd('brand'));
+  const init = runCli(refreshScratch, ['init', '--ai', 'claude', '--force']);
+  expect(init.status).toBe(0);
+  expect(existsSync(join(toRefresh, OWNER_MARKER))).toBe(true);
+  expect(await readFile(join(toRefresh, 'SKILL.md'), 'utf-8')).toBe(
+    await readFile(join(CLI_ROOT, 'assets', 'skills', 'brand', 'SKILL.md'), 'utf-8')
+  );
+});
+
+test('a user-edited SKILL.md without the marker is not managed', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'uipro-own-edited-'));
+  const dir = await installLegacy(scratch, 'brand', 'something the user wrote');
+  expect(await isManagedSkill(dir, join(CLI_ROOT, 'assets', 'skills', 'brand'))).toBe(false);
+});
+
+test('a plain file at a sub-skill path is skipped as "not a directory", never replaced or deleted', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'uipro-own-file-'));
+  const file = join(scratch, '.claude', 'skills', 'slides');
+  await mkdir(join(scratch, '.claude', 'skills'), { recursive: true });
+  await writeFile(file, 'i am a file');
+
+  const plan = (await planPlatformInstallActions(scratch, 'claude', false, true)).join('\n');
+  expect(plan).toContain(`Would skip (not installed by uipro, not a directory): ${file}`);
+
+  const init = runCli(scratch, ['init', '--ai', 'claude', '--force']);
+  expect(init.status).toBe(0);
+  expect(init.output).toContain('not a directory');
+  expect(await readFile(file, 'utf-8')).toBe('i am a file');
+
+  const un = runCli(scratch, ['uninstall', '--ai', 'claude'], 'y\n');
+  expect(un.status).toBe(0);
+  expect(await readFile(file, 'utf-8')).toBe('i am a file');
+});
+
+test('uninstall with nothing to remove does not prompt and exits 0', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'uipro-own-empty-'));
+  await mkdir(join(scratch, '.claude'), { recursive: true });
+  const result = runCli(scratch, ['uninstall', '--ai', 'claude'], '');
+  expect(result.status).toBe(0);
+  expect(result.output).toContain('Nothing to remove');
+  expect(result.output).not.toContain('Will remove');
+});
+
+test('uninstall --ai all lists each path once', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'uipro-own-dedupe-'));
+  expect(runCli(scratch, ['init', '--ai', 'claude']).status).toBe(0);
+  expect(runCli(scratch, ['init', '--ai', 'universal']).status).toBe(0);
+  const result = runCli(scratch, ['uninstall', '--ai', 'all'], 'y\n');
+  expect(result.status).toBe(0);
+  const prompt = result.output.slice(result.output.indexOf('Will remove:'), result.output.indexOf('(y/N)'));
+  const lines = prompt.split('\n').filter(l => l.startsWith('  /'));
+  expect(new Set(lines).size).toBe(lines.length);
 });

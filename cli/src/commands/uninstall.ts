@@ -17,7 +17,7 @@ interface UninstallOptions {
 
 interface RemovalPlan {
   /** Standalone skill files and directories that will be removed, as absolute paths. */
-  targets: { abs: string; label: string }[];
+  targets: { abs: string; label: string; guard?: string }[];
   /** Existing sub-skill directories uipro did not install; never removed. */
   kept: string[];
 }
@@ -69,8 +69,9 @@ async function planRemoval(baseDir: string, aiType: ConcreteAIType): Promise<Rem
     for (const name of skillNames) {
       const skillDir = join(baseDir, parent, name);
       if (!(await pathExists(skillDir))) continue;
-      if (name === 'ui-ux-pro-max' || (await isManagedSkill(skillDir, bundledSubSkillDir(name)))) {
-        plan.targets.push({ abs: skillDir, label: `${parent.replaceAll('\\', '/')}/${name}` });
+      const guard = name === 'ui-ux-pro-max' ? undefined : bundledSubSkillDir(name);
+      if (!guard || (await isManagedSkill(skillDir, guard))) {
+        plan.targets.push({ abs: skillDir, label: `${parent.replaceAll('\\', '/')}/${name}`, guard });
       } else {
         plan.kept.push(skillDir);
       }
@@ -93,7 +94,9 @@ async function pathExists(path: string): Promise<boolean> {
 
 async function executeRemoval(plan: RemovalPlan): Promise<string[]> {
   const removed: string[] = [];
-  for (const { abs, label } of plan.targets) {
+  for (const { abs, label, guard } of plan.targets) {
+    // Re-check ownership right before deleting (the user may have changed it since the prompt).
+    if (guard && !(await isManagedSkill(abs, guard))) continue;
     await rm(abs, { recursive: true, force: true });
     removed.push(label);
   }
@@ -149,8 +152,20 @@ export async function uninstallCommand(options: UninstallOptions): Promise<void>
   const plan: RemovalPlan = { targets: [], kept: [] };
   for (const type of typesToRemove) {
     const p = await planRemoval(baseDir, type);
-    plan.targets.push(...p.targets);
-    plan.kept.push(...p.kept);
+    for (const t of p.targets) {
+      if (!plan.targets.some(x => x.abs === t.abs)) plan.targets.push(t);
+    }
+    for (const k of p.kept) {
+      if (!plan.kept.includes(k)) plan.kept.push(k);
+    }
+  }
+
+  if (plan.targets.length === 0) {
+    logger.info('Nothing to remove.');
+    if (plan.kept.length > 0) {
+      logger.info(`Kept (not installed by uipro):\n${plan.kept.map(p => `  ${p}`).join('\n')}`);
+    }
+    return;
   }
 
   const keptNote = plan.kept.length > 0

@@ -152,7 +152,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
     if (result.notManaged.length > 0) {
       console.log();
-      logger.info('Skipped (not installed by uipro, left untouched even with --force):');
+      logger.info('Skipped (not installed by uipro or not a directory, left untouched even with --force):');
       result.notManaged.forEach(path => {
         console.log(`  ${chalk.yellow('-')} ${path}`);
       });
