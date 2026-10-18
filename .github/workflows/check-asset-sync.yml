@@ -21,13 +21,16 @@ on:
       - "cli/scripts/sync-assets.mjs"
       - ".github/workflows/check-asset-sync.yml"
 
+permissions:
+  contents: read
+
 jobs:
   check-assets:
     name: cli/assets and .claude/skills/ui-ux-pro-max must match src/ui-ux-pro-max
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
       # check:assets runs `node scripts/sync-assets.mjs --check`, which uses only

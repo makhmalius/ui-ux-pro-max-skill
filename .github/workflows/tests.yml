@@ -18,33 +18,46 @@ on:
       - 'scripts/refresh-icon-catalog.py'
       - 'scripts/relevance_metrics.py'
       - 'scripts/validate-agent-guide.py'
+      - 'scripts/validate-workflows.py'
+      - 'scripts/test_validate_workflows.py'
       - 'src/ui-ux-pro-max/data/**'
       - 'src/ui-ux-pro-max/scripts/**'
       - 'src/ui-ux-pro-max/templates/**'
-      - '.github/workflows/tests.yml'
-      - '.github/workflows/refresh-catalogs.yml'
+      - '.github/workflows/**'
   push:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   pytest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      # fetch-depth: 0 -- cli/tests/e2e/ownership.spec.ts reads historical
+      # SKILL.md versions from git history and fails on a shallow checkout.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.x'
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
 
-      - name: Install pytest
-        run: pip install pytest
+      - name: Install pytest and PyYAML
+        run: pip install pytest pyyaml
+
+      - name: Validate workflows
+        run: |
+          python3 scripts/validate-workflows.py
+          python3 -m unittest scripts/test_validate_workflows.py
 
       - name: Run aggregate offline data gate
         run: npm --prefix cli run verify:data
@@ -52,11 +65,21 @@ jobs:
       - name: Run skill regression tests
         run: python3 -m pytest .claude/skills -v
 
-      - name: Install Playwright deps
+      - name: Install CLI dependencies
         working-directory: cli
-        run: |
-          npm ci
-          npx playwright install --with-deps chromium
+        run: npm ci
+
+      - name: Typecheck CLI
+        working-directory: cli
+        run: npm run typecheck
+
+      - name: Build CLI
+        working-directory: cli
+        run: npm run build
+
+      - name: Install Playwright browsers
+        working-directory: cli
+        run: npx playwright install --with-deps chromium
 
       - name: Run preview e2e smoke tests
         working-directory: cli
@@ -74,8 +97,45 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-report
           path: cli/playwright-report/
           retention-days: 7
+
+  cli-cross-platform:
+    name: CLI on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: Install CLI dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Check asset sync
+        run: npm run check:assets
+
+      - name: Run script tests
+        run: npm run test:scripts
+
+      - name: Dry-run install
+        run: node dist/index.js init --ai claude --dry-run
