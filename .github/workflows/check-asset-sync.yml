@@ -6,7 +6,9 @@ on:
       - "src/ui-ux-pro-max/**"
       - "cli/assets/**"
       - ".claude/skills/**"
-      - "cli/scripts/sync-assets.mjs"
+      - "cli/scripts/**"
+      - "skill.json"
+      - ".agents/**"
       - "cli/package.json"
       - "scripts/evaluate-relevance.py"
       - "scripts/relevance_metrics.py"
@@ -18,7 +20,9 @@ on:
       - "cli/assets/**"
       - "cli/package.json"
       - ".claude/skills/**"
-      - "cli/scripts/sync-assets.mjs"
+      - "cli/scripts/**"
+      - "skill.json"
+      - ".agents/**"
       - ".github/workflows/check-asset-sync.yml"
 
 permissions:

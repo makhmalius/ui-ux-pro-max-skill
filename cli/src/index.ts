@@ -29,7 +29,7 @@ program
   .option('-f, --force', 'Overwrite existing files')
   .option('-o, --offline', 'Compatibility flag; template installs use bundled assets')
   .option('-g, --global', 'Install globally to home directory (~/) instead of current project')
-  .option('-t, --token <token>', 'GitHub Personal Access Token for higher API rate limits')
+  .option('-t, --token <token>', 'Accepted for compatibility and ignored by init (init makes no GitHub requests)')
   .option('--dry-run', 'Preview install actions without writing files')
   .action(async (options) => {
     if (options.ai && !AI_TYPES.includes(options.ai)) {

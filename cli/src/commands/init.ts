@@ -176,8 +176,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
     console.log();
     if (result.folders.length === 0) {
-      logger.warn(NOTHING_INSTALLED);
-      return;
+      return; // The spinner above already said nothing was installed.
     }
 
     logger.success('UI/UX Pro Max installed successfully!');

@@ -77,5 +77,12 @@ class TestSingleTermRecall(unittest.TestCase):
         self.assertIn("No searchable terms in query", proc.stdout)
 
 
+class TestSearchDocstring(unittest.TestCase):
+    def test_docstring_has_no_hardcoded_version(self):
+        source = (SCRIPTS_DIR / "search.py").read_text(encoding="utf-8")
+        docstring = source.split('"""', 2)[1]
+        self.assertIsNone(re.search(r"\bv?\d+\.\d+\.\d+\b", docstring), docstring[:200])
+
+
 if __name__ == "__main__":
     unittest.main()

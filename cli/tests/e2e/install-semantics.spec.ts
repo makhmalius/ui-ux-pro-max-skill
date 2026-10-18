@@ -54,6 +54,7 @@ test('init --ai claude twice says nothing was installed, then repairs missing da
   const second = runCli(scratch, ['init', '--ai', 'claude']);
   expect(second.status).toBe(0);
   expect(second.output).toContain('Nothing installed');
+  expect(second.output.split('Nothing installed').length - 1).toBe(1);
   expect(second.output).not.toContain('installed successfully');
 
   await writeFile(join(skillDir, 'SKILL.md'), 'my customised skill');
@@ -192,4 +193,13 @@ test('--global dry-run treats a plain-file platform dir in the home directory th
   const real = runCli(scratch, ['init', '--ai', 'cursor', '--global'], env);
   expect(real.status).toBe(1);
   expect(real.output).toContain('ENOTDIR');
+});
+
+test('init --help describes --token as accepted but ignored', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'uipro-help-'));
+  const help = runCli(scratch, ['init', '--help']);
+  expect(help.status).toBe(0);
+  const tokenLine = help.output.split('\n').find(l => l.includes('--token')) ?? '';
+  expect(tokenLine).not.toContain('rate limit');
+  expect(help.output).toMatch(/--token[\s\S]*ignored by init/);
 });

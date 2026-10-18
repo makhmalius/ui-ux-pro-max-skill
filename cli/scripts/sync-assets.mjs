@@ -86,6 +86,22 @@ export function diffPlatforms(skillJson, aiTypes) {
   };
 }
 
+// One fix hint per kind of drift present: sync:assets repairs only the mirrored
+// files, not tracked symlinks or the skill.json platforms list.
+export function driftHints(drift) {
+  const hints = [];
+  if (drift.some((d) => d.startsWith('tracked symlink'))) {
+    hints.push('Tracked symlinks: replace each with a real file (a mirrored copy); syncing will not fix this.');
+  }
+  if (drift.some((d) => d.startsWith('skill.json platforms'))) {
+    hints.push('skill.json: edit its "platforms" list to match AI_TYPES in cli/src/types/index.ts (without "all"); syncing will not fix this.');
+  }
+  if (drift.some((d) => !d.startsWith('tracked symlink') && !d.startsWith('skill.json platforms'))) {
+    hints.push('Mirrored files: run `npm run sync:assets` (from cli/).');
+  }
+  return hints;
+}
+
 // sourceMap/targetMap: relative path -> content hash. Reports drift in both
 // directions (extra/missing/stale) except files the predicate excludes.
 export function diffFileMaps(label, sourceMap, targetMap, isExcluded) {
@@ -250,7 +266,10 @@ async function checkAssets() {
     for (const item of drift) {
       console.error(`  - ${item}`);
     }
-    console.error('\nRun: npm run sync:assets');
+    console.error('');
+    for (const hint of driftHints(drift)) {
+      console.error(hint);
+    }
     process.exit(1);
   }
 

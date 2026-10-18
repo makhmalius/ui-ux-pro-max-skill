@@ -177,6 +177,17 @@ class ValidateWorkflows(unittest.TestCase):
         t = GOOD["tests.yml"].replace(f"actions/checkout@{SHA}", "actions/checkout@v6")
         self.assertRule(run_with({"tests.yml": t}), "sha-pin")
 
+    def test_path_filters_must_cover_check_inputs(self):
+        filtered = "name: c\non:\n  pull_request:\n    paths:\n      - 'src/**'\npermissions:\n  contents: read\njobs: {}\n"
+        for f in vw.PATH_FILTER_REQUIRED:
+            problems = run_with({f: filtered})
+            for glob in vw.REQUIRED_PATH_GLOBS:
+                self.assertTrue(any("path-filter" in p and glob in p and p.startswith(f) for p in problems), (f, glob, problems))
+        ok = filtered.replace("      - 'src/**'\n", "".join(f"      - '{g}'\n" for g in vw.REQUIRED_PATH_GLOBS))
+        self.assertEqual(run_with({"check-asset-sync.yml": ok}), [])
+        push_only = filtered.replace("pull_request:", "push:")
+        self.assertRule(run_with({"tests.yml": push_only}), "path-filter", "tests.yml")
+
     def test_real_workflows_pass(self):
         root = Path(__file__).resolve().parent.parent / ".github" / "workflows"
         self.assertEqual(vw.validate(root), [])

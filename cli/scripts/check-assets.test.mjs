@@ -9,6 +9,7 @@ import {
   assertInsideRepo,
   diffFileMaps,
   diffPlatforms,
+  driftHints,
   findSymlinkEntries,
   isMainModule,
   parseAiTypes,
@@ -51,6 +52,31 @@ test('diffPlatforms flags missing and extra platforms', () => {
   assert.deepEqual(d.extra, ['openclaw']);
   const ok = diffPlatforms({ platforms: ['zcode', 'claude'] }, ['claude', 'zcode']);
   assert.deepEqual(ok, { missing: [], extra: [] });
+});
+
+test('driftHints gives a category-specific fix for each kind of drift', () => {
+  const symlinkOnly = driftHints(['tracked symlink (mode 120000): .claude/x']);
+  assert.equal(symlinkOnly.length, 1);
+  assert.match(symlinkOnly[0], /real file/);
+  assert.doesNotMatch(symlinkOnly[0], /sync:assets/);
+
+  const skillJsonOnly = driftHints(['skill.json platforms is missing CLI type: zcode']);
+  assert.equal(skillJsonOnly.length, 1);
+  assert.match(skillJsonOnly[0], /skill\.json/);
+  assert.match(skillJsonOnly[0], /AI_TYPES/);
+  assert.doesNotMatch(skillJsonOnly[0], /sync:assets/);
+
+  const syncable = driftHints(['stale asset file: data/a.csv', 'missing mirrored file: x']);
+  assert.deepEqual(syncable.length, 1);
+  assert.match(syncable[0], /npm run sync:assets/);
+
+  const mixed = driftHints([
+    'tracked symlink (mode 120000): a',
+    'skill.json platforms lists unsupported type: q',
+    'stale asset file: data/a.csv',
+  ]);
+  assert.equal(mixed.length, 3);
+  assert.deepEqual(driftHints([]), []);
 });
 
 test('assertInsideRepo accepts inside paths and rejects sibling/escape paths', () => {

@@ -16,6 +16,9 @@ except ImportError:
     sys.exit("validate-workflows.py needs PyYAML: pip install pyyaml")
 
 PERMISSIONS_REQUIRED = ("tests.yml", "smoke-stacks.yml", "check-asset-sync.yml")
+PATH_FILTER_REQUIRED = ("tests.yml", "check-asset-sync.yml")
+# Inputs of the checks these workflows run; a PR touching only these must trigger them.
+REQUIRED_PATH_GLOBS = ("skill.json", ".agents/**", "cli/scripts/**")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 EXPR_RE = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 UNSAFE_EXPR_RE = re.compile(
@@ -64,6 +67,19 @@ def check_workflow(path, doc, text):
     # Least privilege permissions on read-only workflows.
     if name in PERMISSIONS_REQUIRED and "permissions" not in doc:
         bad("permissions", "missing top-level 'permissions:'")
+
+    # Path filters must cover the inputs of the checks (skill.json, caveman mirror, cli/scripts).
+    if name in PATH_FILTER_REQUIRED:
+        triggers = doc.get("on", doc.get(True)) or {}
+        for event in ("pull_request", "push"):
+            cfg = triggers.get(event) if isinstance(triggers, dict) else None
+            paths = cfg.get("paths") if isinstance(cfg, dict) else None
+            if paths is None:
+                continue  # no path filter: every change triggers the workflow
+            normalized = {str(p).strip("'\"") for p in paths}
+            for glob in REQUIRED_PATH_GLOBS:
+                if glob not in normalized:
+                    bad("path-filter", f"{event}.paths must include '{glob}'")
 
     # Unused OIDC permission.
     if name == "release.yml" and re.search(r"id-token:\s*write", text):

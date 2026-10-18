@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { cp, mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OWNER_MARKER, isManagedSkill, planPlatformInstallActions } from '../../src/utils/template.js';
 
@@ -200,6 +200,8 @@ test('uninstall --ai all lists each path once', async () => {
   const result = runCli(scratch, ['uninstall', '--ai', 'all'], 'y\n');
   expect(result.status).toBe(0);
   const prompt = result.output.slice(result.output.indexOf('Will remove:'), result.output.indexOf('(y/N)'));
-  const lines = prompt.split('\n').filter(l => l.startsWith('  /'));
+  // Path lines are indented absolute paths on every platform (POSIX '/...', Windows 'C:\\...').
+  const lines = prompt.split('\n').filter(l => l.startsWith('  ') && isAbsolute(l.trim()));
+  expect(lines.length).toBeGreaterThan(0);
   expect(new Set(lines).size).toBe(lines.length);
 });
