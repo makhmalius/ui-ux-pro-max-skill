@@ -26,7 +26,7 @@ export function detectAIType(cwd: string = process.cwd()): DetectionResult {
   } else if (existsSync(join(cwd, '.agent'))) {
     detected.push('antigravity');
   }
-  if (existsSync(join(cwd, '.github'))) {
+  if (existsSync(join(cwd, '.github', 'prompts'))) {
     detected.push('copilot');
   }
   if (existsSync(join(cwd, '.kiro'))) {
@@ -75,20 +75,8 @@ export function detectAIType(cwd: string = process.cwd()): DetectionResult {
     detected.push('zcode');
   }
 
-  // Suggest based on what's detected
-  let suggested: AIType | null = null;
-  if (detected.length === 1) {
-    suggested = detected[0];
-  } else if (
-    (detected.length === 2 || detected.length === 3) &&
-    detected.includes('antigravity') &&
-    detected.includes('codex')
-  ) {
-    // Platforms share `.agents`; avoid suggesting an install for every AI.
-    suggested = 'codex';
-  } else if (detected.length > 1) {
-    suggested = 'all';
-  }
+  // Suggest the first detected type; never default to installing for everything.
+  const suggested: AIType | null = detected.length > 0 ? detected[0] : null;
 
   return { detected, suggested };
 }

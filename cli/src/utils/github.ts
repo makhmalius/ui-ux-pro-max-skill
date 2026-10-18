@@ -1,4 +1,3 @@
-import { writeFile } from 'node:fs/promises';
 import type { Release } from '../types/index.js';
 
 const REPO_OWNER = 'nextlevelbuilder';
@@ -89,39 +88,4 @@ export async function getLatestRelease(token?: string): Promise<Release> {
   }
 
   return response.json();
-}
-
-export async function downloadRelease(url: string, dest: string, token?: string): Promise<void> {
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': USER_AGENT,
-      'Accept': 'application/octet-stream',
-      ...getAuthHeaders(token),
-    },
-  });
-
-  checkRateLimit(response);
-
-  if (!response.ok) {
-    throw new GitHubDownloadError(`Failed to download: ${response.status} ${response.statusText}`);
-  }
-
-  const buffer = await response.arrayBuffer();
-  await writeFile(dest, Buffer.from(buffer));
-}
-
-export function getAssetUrl(release: Release): string | null {
-  // First try to find an uploaded ZIP asset
-  const asset = release.assets.find(a => a.name.endsWith('.zip'));
-  if (asset?.browser_download_url) {
-    return asset.browser_download_url;
-  }
-
-  // Fall back to GitHub's auto-generated archive
-  // Format: https://github.com/{owner}/{repo}/archive/refs/tags/{tag}.zip
-  if (release.tag_name) {
-    return `https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/tags/${release.tag_name}.zip`;
-  }
-
-  return null;
 }

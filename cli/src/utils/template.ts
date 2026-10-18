@@ -181,29 +181,37 @@ async function ensureCleanDir(path: string): Promise<void> {
   }
 }
 
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Copy data and scripts to target directory
+ * Copy data and scripts to target directory. Each is decided on its own: an
+ * existing directory is left alone unless `force`, a missing one (or a stale
+ * non-directory pointer file) is (re)created. Returns the paths left alone.
  */
-async function copyDataAndScripts(targetSkillDir: string): Promise<void> {
-  const dataSource = join(ASSETS_DIR, 'data');
-  const scriptsSource = join(ASSETS_DIR, 'scripts');
+async function copyDataAndScripts(targetSkillDir: string, force: boolean): Promise<string[]> {
+  const skipped: string[] = [];
 
-  const dataTarget = join(targetSkillDir, 'data');
-  const scriptsTarget = join(targetSkillDir, 'scripts');
+  for (const name of ['data', 'scripts']) {
+    const source = join(ASSETS_DIR, name);
+    if (!(await exists(source))) continue;
 
-  // Copy data
-  if (await exists(dataSource)) {
-    await ensureCleanDir(dataTarget);
-    await mkdir(dataTarget, { recursive: true });
-    await cp(dataSource, dataTarget, { recursive: true });
+    const target = join(targetSkillDir, name);
+    if (!force && (await isDirectory(target))) {
+      skipped.push(target);
+      continue;
+    }
+    await ensureCleanDir(target);
+    await mkdir(target, { recursive: true });
+    await cp(source, target, { recursive: true });
   }
 
-  // Copy scripts
-  if (await exists(scriptsSource)) {
-    await ensureCleanDir(scriptsTarget);
-    await mkdir(scriptsTarget, { recursive: true });
-    await cp(scriptsSource, scriptsTarget, { recursive: true });
-  }
+  return skipped;
 }
 
 /**
@@ -220,17 +228,30 @@ export async function listBundledSubSkills(): Promise<string[]> {
 /**
  * Install the bundled sub-skills as siblings of the orchestrator skill, so a
  * single `uipro init` delivers all 7 skills instead of only ui-ux-pro-max.
+ * Existing sub-skill directories are left alone unless `force`; the paths left
+ * alone are reported in `skipped`.
  */
-async function copySubSkills(skillsParentDir: string, force: boolean): Promise<void> {
+async function copySubSkills(
+  skillsParentDir: string,
+  force: boolean
+): Promise<{ installed: string[]; skipped: string[] }> {
+  const installed: string[] = [];
+  const skipped: string[] = [];
   const skillsSource = join(ASSETS_DIR, 'skills');
-  if (!(await exists(skillsSource))) return;
+  if (!(await exists(skillsSource))) return { installed, skipped };
 
   for (const name of await listBundledSubSkills()) {
     const target = join(skillsParentDir, name);
-    if (await exists(target) && !force) continue;
+    if (await exists(target) && !force) {
+      skipped.push(target);
+      continue;
+    }
     await mkdir(target, { recursive: true });
     await cp(join(skillsSource, name), target, { recursive: true });
+    installed.push(target);
   }
+
+  return { installed, skipped };
 }
 
 /**
@@ -279,19 +300,35 @@ function resolveInstallPaths(
   return { skillDir, skillFilePath, dataDir, skillsParentDir };
 }
 
+export interface InstallResult {
+  /** Platform root folders that received new files (empty if nothing was written). */
+  folders: string[];
+  /** Paths that already existed and were left untouched. */
+  skipped: string[];
+}
+
+export interface InstallAllResult extends InstallResult {
+  /** Platforms whose install threw; the remaining platforms are still installed. */
+  failures: { aiType: string; error: string }[];
+}
+
 /**
  * Generate platform files for a specific AI type
  * All platforms use self-contained installation with data and scripts
  * When isGlobal=true, installs to ~/home directory with absolute script paths
+ * Each artifact (SKILL.md, data, scripts, every sub-skill) is skipped on its
+ * own when it already exists and `force` is not set, so a partial install is
+ * repaired without clobbering user edits. Throws if any write fails.
  */
 export async function generatePlatformFiles(
   targetDir: string,
   aiType: string,
   isGlobal = false,
   force = false
-): Promise<string[]> {
+): Promise<InstallResult> {
   const config = await loadPlatformConfig(aiType);
-  const createdFolders: string[] = [];
+  const skipped: string[] = [];
+  let wrote = false;
   const { skillDir, skillFilePath, dataDir, skillsParentDir } = resolveInstallPaths(
     config,
     targetDir,
@@ -302,25 +339,26 @@ export async function generatePlatformFiles(
   await mkdir(skillDir, { recursive: true });
 
   // Render and write skill file (pass isGlobal to adjust paths)
-  const skillContent = await renderSkillFile(config, isGlobal);
-
-  const fileAlreadyExists = await exists(skillFilePath);
-  if (fileAlreadyExists && !force) {
-    console.log(`  Skipped (already exists): ${skillFilePath} — use --force to overwrite`);
-    return [];
+  if ((await exists(skillFilePath)) && !force) {
+    skipped.push(skillFilePath);
+  } else {
+    await writeFile(skillFilePath, await renderSkillFile(config, isGlobal), 'utf-8');
+    wrote = true;
   }
 
-  await writeFile(skillFilePath, skillContent, 'utf-8');
-  createdFolders.push(config.folderStructure.root);
-
   await mkdir(dataDir, { recursive: true });
-  await copyDataAndScripts(dataDir);
+  const dataSkipped = await copyDataAndScripts(dataDir, force);
+  skipped.push(...dataSkipped);
+  const dataScriptsTotal = ['data', 'scripts'].filter(n => existsSync(join(ASSETS_DIR, n))).length;
+  if (dataSkipped.length < dataScriptsTotal) wrote = true;
 
   // Install the sibling sub-skills (banner-design, brand, design, ...) next to
   // the orchestrator so all 7 skills are delivered.
-  await copySubSkills(skillsParentDir, force);
+  const subSkills = await copySubSkills(skillsParentDir, force);
+  skipped.push(...subSkills.skipped);
+  if (subSkills.installed.length > 0) wrote = true;
 
-  return createdFolders;
+  return { folders: wrote ? [config.folderStructure.root] : [], skipped };
 }
 
 /**
@@ -388,10 +426,17 @@ export async function planAllPlatformInstallActions(
 }
 
 /**
- * Generate files for all AI types
+ * Generate files for all AI types. A platform that fails is recorded in
+ * `failures` and does not stop the remaining platforms.
  */
-export async function generateAllPlatformFiles(targetDir: string, isGlobal = false, force = false): Promise<string[]> {
+export async function generateAllPlatformFiles(
+  targetDir: string,
+  isGlobal = false,
+  force = false
+): Promise<InstallAllResult> {
   const allFolders = new Set<string>();
+  const allSkipped = new Set<string>();
+  const failures: { aiType: string; error: string }[] = [];
   const generatedSkillFiles = new Set<string>();
 
   for (const aiType of Object.keys(AI_TO_PLATFORM)) {
@@ -404,15 +449,19 @@ export async function generateAllPlatformFiles(targetDir: string, isGlobal = fal
       );
       if (generatedSkillFiles.has(skillFile)) continue;
 
-      const folders = await generatePlatformFiles(targetDir, aiType, isGlobal, force);
+      const result = await generatePlatformFiles(targetDir, aiType, isGlobal, force);
       generatedSkillFiles.add(skillFile);
-      folders.forEach(f => allFolders.add(f));
-    } catch {
-      // Skip if generation fails for a platform
+      result.folders.forEach(f => allFolders.add(f));
+      result.skipped.forEach(p => allSkipped.add(p));
+    } catch (error) {
+      failures.push({
+        aiType,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
-  return Array.from(allFolders);
+  return { folders: Array.from(allFolders), skipped: Array.from(allSkipped), failures };
 }
 
 /**
