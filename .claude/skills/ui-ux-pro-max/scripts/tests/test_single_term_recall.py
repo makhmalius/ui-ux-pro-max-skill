@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """Single-term recall, gibberish abstention and no-token messaging."""
 
+import re
 import subprocess
 import sys
 import unittest
@@ -27,7 +28,35 @@ EXACT_KEYWORD_PAIRS = [
 ]
 
 
+# Generic words whose bypass previously let unrelated rows ride along.
+RIDER_EXAMPLES = [
+    ("product", "card"), ("product", "login"), ("product", "menu"),
+    ("product", "fast"), ("style", "hover"), ("style", "modern"),
+    ("style", "color"),
+]
+IDENTITY_FIELDS = ("Keywords", "Aliases", "Style ID", "Style Category")
+
+
+def _whole_words(row):
+    words = set()
+    for field in IDENTITY_FIELDS:
+        words.update(re.findall(r"[a-z0-9]+", str(row.get(field, "")).lower()))
+    return words
+
+
 class TestSingleTermRecall(unittest.TestCase):
+    def test_bypass_returns_only_rows_containing_the_term(self):
+        for domain, query in RIDER_EXAMPLES:
+            with self.subTest(domain=domain, query=query):
+                result = search(query, domain)
+                for row in result["results"]:
+                    self.assertIn(query, _whole_words(row), row)
+
+    def test_stopword_only_query_reports_no_searchable_terms(self):
+        result = search("the", "style", diagnostics=True)
+        self.assertEqual(result["count"], 0)
+        self.assertTrue(result.get("no_searchable_terms"), result)
+
     def test_exact_single_keyword_returns_row(self):
         for domain, query in EXACT_KEYWORD_PAIRS:
             with self.subTest(domain=domain, query=query):

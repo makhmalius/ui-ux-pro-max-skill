@@ -195,7 +195,7 @@ _STACK_QUERY_NAMES = {
 AVAILABLE_STACKS = list(STACK_CONFIG.keys())
 
 _INDEX_VERSION = 3
-_SEARCH_CALIBRATION_VERSION = "2026-10-18-v1"
+_SEARCH_CALIBRATION_VERSION = "2026-10-18-v2"
 
 # Search calibration uses evidence coverage first; raw BM25 floors are kept
 # domain-specific because corpora vary greatly in size and document length.
@@ -472,7 +472,6 @@ def _search_csv_detailed(filepath, search_cols, output_cols, query, max_results,
             _has_exact_term(bm25, data[idx], query_tokens)
             for idx, score in ranked[:max_results] if score > 0)
     abstain = ((floor_applies and top_score <= threshold["min_score"])
-               or (top_score <= 0 and threshold["min_score"] <= 0)
                or coverage < threshold["min_coverage"]
                or (threshold["min_margin"] > 0
                    and top_score - runner_up_score < threshold["min_margin"]))
@@ -483,6 +482,9 @@ def _search_csv_detailed(filepath, search_cols, output_cols, query, max_results,
             if score <= 0:
                 continue
             row = data[idx]
+            # With the floor bypassed, a row must itself carry the lone term.
+            if not floor_applies and not _has_exact_term(bm25, row, query_tokens):
+                continue
             results.append({col: row.get(col, "") for col in output_cols if col in row})
 
     diagnostic = {"normalized_query": _normalize(query), "search_query": search_query,
