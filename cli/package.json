@@ -15,6 +15,7 @@
     "dev": "bun run src/index.ts",
     "sync:assets": "node scripts/sync-assets.mjs",
     "check:assets": "node scripts/sync-assets.mjs --check",
+    "test:scripts": "node scripts/check-assets.test.mjs",
     "validate:csv": "cd .. && node cli/scripts/run-python.mjs scripts/validate-csv.py",
     "validate:semantic": "cd .. && node cli/scripts/run-python.mjs src/ui-ux-pro-max/scripts/validate_data.py",
     "validate:agent-guide": "cd .. && node cli/scripts/run-python.mjs scripts/validate-agent-guide.py",
@@ -25,7 +26,7 @@
     "evaluate:relevance:held-out": "cd .. && node cli/scripts/run-python.mjs scripts/evaluate-relevance.py --split held_out",
     "smoke:domains": "cd .. && bash scripts/smoke-domains.sh",
     "smoke:stacks": "cd .. && bash scripts/smoke-stacks.sh",
-    "verify:data": "npm run validate:csv && npm run validate:semantic && npm run validate:agent-guide && npm run validate:catalog-summary && npm run test:python && npm run evaluate:relevance && npm run smoke:domains && npm run smoke:stacks && npm run check:assets",
+    "verify:data": "npm run validate:csv && npm run validate:semantic && npm run validate:agent-guide && npm run validate:catalog-summary && npm run test:python && npm run test:scripts && npm run evaluate:relevance && npm run smoke:domains && npm run smoke:stacks && npm run check:assets",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run sync:assets && npm run verify:data && npm run typecheck && npm run build"
   },

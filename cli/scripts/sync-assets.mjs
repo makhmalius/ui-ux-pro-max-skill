@@ -9,15 +9,15 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(__dirname, '..', '..');
+export const repoRoot = resolve(__dirname, '..', '..');
 const sourceRoot = join(repoRoot, 'src', 'ui-ux-pro-max');
 const assetRoot = join(repoRoot, 'cli', 'assets');
 const dirsToSync = ['data', 'scripts', 'templates'];
-const checkOnly = process.argv.includes('--check');
 
 // The 6 sibling sub-skills are bundled (as static copies) so `uipro init`
 // installs all 7 skills, not just the template-rendered orchestrator. Source
@@ -37,13 +37,76 @@ const subSkills = ['banner-design', 'brand', 'design', 'design-system', 'slides'
 const orchestratorSkillTargetRoot = join(skillsSourceRoot, 'ui-ux-pro-max');
 const orchestratorDirsToSync = ['data', 'scripts'];
 
-// ponytail: only text is bundled. Excludes (a) heavy binary assets — the
-// canvas fonts are ~5.8MB and a skill registers from its SKILL.md, not its
-// fonts — and (b) Python build cruft (__pycache__/*.pyc, .coverage) that would
-// otherwise be picked up from a local run.
+// Directories deliberately NOT mirrored from .claude/skills/<sub-skill>/ into
+// cli/assets/skills/<sub-skill>/. ui-styling/canvas-fonts is ~5.5MB of .ttf plus
+// OFL licences; the only mention of it is one loose line in
+// references/canvas-design-system.md ("Search ./canvas-fonts directory"), and a
+// skill registers from its SKILL.md, not its fonts. Shipping it would grow the
+// npm package ~10x for a hint. This list is the single, explicit source of the
+// exclusion: --check is exact about everything else.
+export const SUB_SKILL_EXCLUDED_DIRS = ['canvas-fonts'];
+
+// ponytail: only text is bundled. Excludes (a) the directories above and
+// binary assets, and (b) Python build cruft (__pycache__/*.pyc, .coverage)
+// that would otherwise be picked up from a local run.
 const isExcludedAssetFile = (rel) =>
-  rel.split('/').some((seg) => seg === 'canvas-fonts' || seg === '__pycache__') ||
+  rel.split('/').some((seg) => SUB_SKILL_EXCLUDED_DIRS.includes(seg) || seg === '__pycache__') ||
   /\.(ttf|otf|woff2?|png|jpe?g|gif|ico|coverage|pyc)$/i.test(rel);
+
+// Single files mirrored as real copies (no symlinks in this repo).
+const fileMirrors = [
+  {
+    source: join(sourceRoot, 'data', 'styles.csv'),
+    target: join(repoRoot, 'gallery', 'data', 'styles.csv'),
+  },
+];
+
+// --- pure helpers (exported for cli/scripts/check-assets.test.mjs) ---------
+
+// `git ls-files -s` lines look like "<mode> <sha> <stage>\t<path>".
+export function findSymlinkEntries(lsFilesOutput) {
+  return lsFilesOutput
+    .split('\n')
+    .filter((line) => line.startsWith('120000 '))
+    .map((line) => line.slice(line.indexOf('\t') + 1));
+}
+
+export function parseAiTypes(typesSource) {
+  const match = typesSource.match(/export const AI_TYPES[^=]*=\s*\[([^\]]*)\]/);
+  if (!match) throw new Error('Could not find AI_TYPES in cli/src/types/index.ts');
+  return [...match[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).filter((t) => t !== 'all');
+}
+
+export function diffPlatforms(skillJson, aiTypes) {
+  const have = new Set(skillJson.platforms ?? []);
+  const want = new Set(aiTypes);
+  return {
+    missing: aiTypes.filter((t) => !have.has(t)),
+    extra: [...have].filter((t) => !want.has(t)),
+  };
+}
+
+// sourceMap/targetMap: relative path -> content hash. Reports drift in both
+// directions (extra/missing/stale) except files the predicate excludes.
+export function diffFileMaps(label, sourceMap, targetMap, isExcluded) {
+  const drift = [];
+  const sourceFiles = [...sourceMap.keys()].filter((f) => !isExcluded(f));
+  const targetFiles = [...targetMap.keys()].filter((f) => !isExcluded(f));
+  for (const file of [...new Set([...sourceFiles, ...targetFiles])].sort()) {
+    if (!sourceMap.has(file)) {
+      drift.push(`extra asset file: ${label}/${file}`);
+    } else if (!targetMap.has(file)) {
+      drift.push(`missing asset file: ${label}/${file}`);
+    } else if (sourceMap.get(file) !== targetMap.get(file)) {
+      drift.push(`stale asset file: ${label}/${file}`);
+    }
+  }
+  return drift;
+}
+
+export function isMainModule(moduleUrl, argv1) {
+  return Boolean(argv1) && moduleUrl === pathToFileURL(resolve(argv1)).href;
+}
 
 // ponytail: all synced assets are text (csv/json/md/py); normalize CRLF->LF so
 // the byte hash and the on-disk copy don't drift with git autocrlf across platforms.
@@ -58,9 +121,10 @@ async function exists(path) {
   }
 }
 
-function assertInsideRepo(path) {
+export function assertInsideRepo(path, root = repoRoot) {
   const resolvedPath = resolve(path);
-  if (!resolvedPath.startsWith(repoRoot)) {
+  const rel = relative(resolve(root), resolvedPath);
+  if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) {
     throw new Error(`Refusing to modify path outside repository: ${resolvedPath}`);
   }
   return resolvedPath;
@@ -101,22 +165,15 @@ async function diffDir(sourceDir, targetDir, label, drift) {
     return;
   }
 
-  const sourceFiles = (await listFiles(sourceDir)).filter((f) => !isExcludedAssetFile(f));
-  const targetFiles = (await listFiles(targetDir)).filter((f) => !isExcludedAssetFile(f));
-  const allFiles = [...new Set([...sourceFiles, ...targetFiles])].sort();
-
-  for (const file of allFiles) {
-    const sourcePath = join(sourceDir, file);
-    const targetPath = join(targetDir, file);
-
-    if (!sourceFiles.includes(file)) {
-      drift.push(`extra asset file: ${label}/${file}`);
-    } else if (!targetFiles.includes(file)) {
-      drift.push(`missing asset file: ${label}/${file}`);
-    } else if ((await fileHash(sourcePath)) !== (await fileHash(targetPath))) {
-      drift.push(`stale asset file: ${label}/${file}`);
-    }
-  }
+  const hashMap = async (dir) =>
+    new Map(
+      await Promise.all(
+        (await listFiles(dir)).map(async (f) => [f, await fileHash(join(dir, f))]),
+      ),
+    );
+  drift.push(
+    ...diffFileMaps(label, await hashMap(sourceDir), await hashMap(targetDir), isExcludedAssetFile),
+  );
 }
 
 // Mirrors sourceDir -> targetDir (deletes targetDir first, so removed
@@ -141,6 +198,32 @@ async function syncDir(sourceDir, targetDir) {
 
 async function checkAssets() {
   const drift = [];
+
+  // No tracked symlinks (git-on-Windows checks them out as plain text files).
+  const lsFiles = execFileSync('git', ['ls-files', '-s'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    maxBuffer: 1 << 28,
+  });
+  for (const link of findSymlinkEntries(lsFiles)) {
+    drift.push(`tracked symlink (mode 120000): ${link}`);
+  }
+
+  // skill.json platforms must equal the CLI's supported AI types.
+  const aiTypes = parseAiTypes(await readFile(join(repoRoot, 'cli', 'src', 'types', 'index.ts'), 'utf8'));
+  const skillJson = JSON.parse(await readFile(join(repoRoot, 'skill.json'), 'utf8'));
+  const platforms = diffPlatforms(skillJson, aiTypes);
+  for (const t of platforms.missing) drift.push(`skill.json platforms is missing CLI type: ${t}`);
+  for (const t of platforms.extra) drift.push(`skill.json platforms lists unsupported type: ${t}`);
+
+  for (const { source, target } of fileMirrors) {
+    const rel = relative(repoRoot, target).replaceAll('\\', '/');
+    if (!(await exists(target))) {
+      drift.push(`missing mirrored file: ${rel}`);
+    } else if ((await fileHash(source)) !== (await fileHash(target))) {
+      drift.push(`stale mirrored file: ${rel}`);
+    }
+  }
 
   for (const dir of dirsToSync) {
     await diffDir(join(sourceRoot, dir), join(assetRoot, dir), dir, drift);
@@ -197,11 +280,20 @@ async function syncAssets() {
     await syncDir(join(sourceRoot, dir), join(orchestratorSkillTargetRoot, dir));
   }
 
+  for (const { source, target } of fileMirrors) {
+    const resolvedTarget = assertInsideRepo(target);
+    await mkdir(dirname(resolvedTarget), { recursive: true });
+    await rm(resolvedTarget, { force: true }); // replace a symlink, don't write through it
+    await writeFile(resolvedTarget, toLF(await readFile(source, 'utf8')));
+  }
+
   console.log('Synced CLI assets + .claude/skills/ui-ux-pro-max data/scripts from src/ui-ux-pro-max, and 6 sub-skills (normalized to LF).');
 }
 
-if (checkOnly) {
-  await checkAssets();
-} else {
-  await syncAssets();
+if (isMainModule(import.meta.url, process.argv[1])) {
+  if (process.argv.includes('--check')) {
+    await checkAssets();
+  } else {
+    await syncAssets();
+  }
 }

@@ -3,6 +3,7 @@ import { readFile, mkdir, writeFile, cp, access, readdir, lstat, rm } from 'node
 import { createHash } from 'node:crypto';
 import { join, dirname, basename } from 'node:path';
 import { LEGACY_SKILL_HASHES } from './legacy-skill-hashes.js';
+import type { PlatformConfig } from '../types/index.js';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
@@ -14,26 +15,6 @@ const ASSETS_CANDIDATES = [
   join(__dirname, '..', '..', 'assets'),
 ];
 const ASSETS_DIR = ASSETS_CANDIDATES.find(path => existsSync(path)) ?? ASSETS_CANDIDATES[0];
-
-export interface PlatformConfig {
-  platform: string;
-  displayName: string;
-  installType: 'full' | 'reference';
-  folderStructure: {
-    root: string;
-    skillPath: string;
-    filename: string;
-    dataPath?: string;
-  };
-  scriptPath: string;
-  frontmatter: Record<string, string> | null;
-  sections: {
-    quickReference: boolean;
-  };
-  title: string;
-  description: string;
-  skillOrWorkflow: string;
-}
 
 // Map AIType to platform config file name
 const AI_TO_PLATFORM: Record<string, string> = {
@@ -89,7 +70,7 @@ export async function loadPlatformConfig(aiType: string): Promise<PlatformConfig
 export async function loadAllPlatformConfigs(): Promise<Map<string, PlatformConfig>> {
   const configs = new Map<string, PlatformConfig>();
 
-  for (const [aiType, platformName] of Object.entries(AI_TO_PLATFORM)) {
+  for (const aiType of Object.keys(AI_TO_PLATFORM)) {
     try {
       const config = await loadPlatformConfig(aiType);
       configs.set(aiType, config);

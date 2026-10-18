@@ -8,9 +8,11 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertFullHistory } from './git-history.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'buffer', maxBuffer: 1 << 28 });
+assertFullHistory(git('rev-parse', '--is-shallow-repository').toString());
 const sha = buf => createHash('sha256').update(buf.toString('utf-8').replace(/\r\n/g, '\n')).digest('hex');
 
 const names = readdirSync(join(root, 'cli', 'assets', 'skills'), { withFileTypes: true })
