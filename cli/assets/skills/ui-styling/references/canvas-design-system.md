@@ -170,7 +170,7 @@ Embed conceptual DNA without announcing:
 - Large sizes for impact moments
 
 **Font integration:**
-- Search `./canvas-fonts` directory
+- Bundled fonts in `./canvas-fonts` ship only with the repository checkout, not the npm package; otherwise use a locally available font or download one
 - Download needed fonts
 - Bring typography onto canvas
 - Part of art, not typeset digitally

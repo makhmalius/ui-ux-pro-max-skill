@@ -53,12 +53,11 @@ ui-ux-pro-max-skill/
 │   └── templates/              # Platform-specific skill templates
 ├── cli/                        # npm CLI installer (ui-ux-pro-max-cli)
 ├── .claude/                    # Local dev/test files for Claude Code
-├── .factory/                   # Local dev/test files for Droid (Factory)
 ├── docs/                       # Documentation
-└── preview/                    # Preview screenshots and demos
+└── preview/                    # Static HTML preview demo (xiaomaomi-app.html)
 ```
 
-> **Important:** Always make data/script changes in `src/ui-ux-pro-max/`, then sync to the CLI (see below). Do not edit `.claude/` or `.factory/` directly for permanent changes.
+> **Important:** Always make data/script changes in `src/ui-ux-pro-max/`, then sync to the CLI (see below). Do not edit `.claude/` directly for permanent changes.
 
 ---
 
