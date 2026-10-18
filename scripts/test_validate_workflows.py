@@ -62,13 +62,26 @@ jobs:
 }
 
 
+DEPENDABOT = (
+    "version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n"
+    "    schedule:\n      interval: weekly\n"
+)
+
+
 def run_with(overrides):
+    """Write fixtures as <tmp>/.github/workflows/*.yml (+ <tmp>/.github/dependabot.yml)."""
     files = dict(GOOD)
+    files["dependabot.yml"] = DEPENDABOT
     files.update(overrides)
     with tempfile.TemporaryDirectory() as d:
+        wf = Path(d, ".github", "workflows")
+        wf.mkdir(parents=True)
         for name, text in files.items():
-            Path(d, name).write_text(text, encoding="utf-8")
-        return vw.validate(d)
+            if text is None:
+                continue
+            target = Path(d, ".github", name) if name == "dependabot.yml" else wf / name
+            target.write_text(text, encoding="utf-8")
+        return vw.validate(wf)
 
 
 class ValidateWorkflows(unittest.TestCase):
@@ -105,6 +118,41 @@ class ValidateWorkflows(unittest.TestCase):
         self.assertRule(run_with({"bump-versions.yml": t}), "run-expression")
         t = GOOD["bump-versions.yml"].replace('run: echo "$V"', 'run: echo "${{ github.event.release.tag_name }}"')
         self.assertRule(run_with({"bump-versions.yml": t}), "run-expression")
+
+    def test_run_expression_applies_to_all_workflows(self):
+        t = GOOD["smoke-stacks.yml"].replace(
+            "jobs: {}",
+            "jobs:\n  s:\n    runs-on: x\n    steps:\n      - run: echo \"${{ steps.a.outputs.b }}\"\n",
+        )
+        self.assertRule(run_with({"smoke-stacks.yml": t}), "run-expression", "smoke-stacks.yml")
+
+    def test_run_expression_new_patterns(self):
+        for expr in ("github.ref_name", "github.actor", "inputs.version"):
+            t = GOOD["bump-versions.yml"].replace('run: echo "$V"', 'run: echo "${{ %s }}"' % expr)
+            self.assertRule(run_with({"bump-versions.yml": t}), "run-expression")
+
+    def test_expression_in_env_is_allowed(self):
+        t = GOOD["smoke-stacks.yml"].replace(
+            "jobs: {}",
+            "jobs:\n  s:\n    runs-on: x\n    steps:\n      - env:\n          V: ${{ github.ref_name }}\n        run: echo \"$V\"\n",
+        )
+        self.assertEqual(run_with({"smoke-stacks.yml": t}), [])
+
+    def test_bun_latest_is_checked_on_parsed_with(self):
+        t = GOOD["release.yml"].replace("bun-version: 1.4.3", 'bun-version: "latest"')
+        self.assertRule(run_with({"release.yml": t}), "pin-bun")
+        t = GOOD["release.yml"].replace("bun-version: 1.4.3", "bun-version: 1.4.3\n          # was bun-version: latest")
+        self.assertEqual(run_with({"release.yml": t}), [])
+
+    def test_dependabot_required(self):
+        problems = run_with({"dependabot.yml": None})
+        self.assertRule(problems, "dependabot")
+
+    def test_dependabot_needs_github_actions_weekly(self):
+        bad = "version: 2\nupdates:\n  - package-ecosystem: npm\n    directory: /\n    schedule:\n      interval: weekly\n"
+        self.assertRule(run_with({"dependabot.yml": bad}), "dependabot")
+        bad = "version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: daily\n"
+        self.assertRule(run_with({"dependabot.yml": bad}), "dependabot")
 
     def test_tests_missing_typecheck_and_build(self):
         t = GOOD["tests.yml"].replace("npm run typecheck", "echo x").replace("npm run build", "echo y")

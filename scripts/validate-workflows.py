@@ -18,7 +18,9 @@ except ImportError:
 PERMISSIONS_REQUIRED = ("tests.yml", "smoke-stacks.yml", "check-asset-sync.yml")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 EXPR_RE = re.compile(r"\$\{\{(.*?)\}\}", re.S)
-UNSAFE_EXPR_RE = re.compile(r"\b(steps|needs)\.|\bgithub\.event|\bgithub\.head_ref")
+UNSAFE_EXPR_RE = re.compile(
+    r"\b(steps|needs)\.|\bgithub\.event|\bgithub\.head_ref|\bgithub\.ref_name|\bgithub\.actor|\binputs\."
+)
 
 
 def steps_of(doc):
@@ -43,8 +45,10 @@ def check_workflow(path, doc, text):
     runs = [(j, s.get("run", "")) for j, s in steps_of(doc) if isinstance(s.get("run"), str)]
 
     # No floating bun.
-    if re.search(r"bun-version:\s*['\"]?latest\b", text):
-        bad("pin-bun", "bun-version: latest is not allowed; use an explicit version")
+    for job, step in steps_of(doc):
+        bv = (step.get("with") or {}).get("bun-version") if isinstance(step.get("with"), dict) else None
+        if bv is not None and str(bv).strip().lower() == "latest":
+            bad("pin-bun", f"job {job}: bun-version: latest is not allowed; use an explicit version")
 
     # semantic-release via npx must be fully versioned.
     for job, run in runs:
@@ -66,11 +70,10 @@ def check_workflow(path, doc, text):
         bad("id-token", "'id-token: write' is not used by release.yml; remove it")
 
     # Script injection: no step/event-derived expressions inside run scripts.
-    if name == "bump-versions.yml":
-        for job, run in runs:
-            for m in EXPR_RE.finditer(run):
-                if UNSAFE_EXPR_RE.search(m.group(1)):
-                    bad("run-expression", f"job {job}: '${{{{{m.group(1)}}}}}' interpolated in run:; pass via env:")
+    for job, run in runs:
+        for m in EXPR_RE.finditer(run):
+            if UNSAFE_EXPR_RE.search(m.group(1)):
+                bad("run-expression", f"job {job}: '${{{{{m.group(1)}}}}}' interpolated in run:; pass via env:")
 
     # CLI jobs must typecheck and build.
     if name == "tests.yml":
@@ -120,6 +123,25 @@ def validate(wf_dir):
             out.append(f"{f.name}: parse: {e}")
             continue
         out += check_workflow(f, doc, text)
+    # Dependabot keeps SHA-pinned actions fresh (.github/dependabot.yml, next to workflows/).
+    dep = wf_dir.parent / "dependabot.yml"
+    if not dep.is_file():
+        out.append("dependabot.yml: dependabot: missing .github/dependabot.yml")
+    else:
+        try:
+            ddoc = yaml.safe_load(dep.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as e:
+            ddoc = {}
+            out.append(f"dependabot.yml: parse: {e}")
+        ok = any(
+            isinstance(u, dict)
+            and u.get("package-ecosystem") == "github-actions"
+            and u.get("directory") == "/"
+            and (u.get("schedule") or {}).get("interval") == "weekly"
+            for u in (ddoc.get("updates") or [] if isinstance(ddoc, dict) else [])
+        )
+        if not ok:
+            out.append("dependabot.yml: dependabot: needs a github-actions entry, directory '/', weekly schedule")
     # One checkout version across all workflows (compare pins incl. trailing comment).
     pins = {}
     for f in files:

@@ -20,6 +20,12 @@ on:
       - 'scripts/validate-agent-guide.py'
       - 'scripts/validate-workflows.py'
       - 'scripts/test_validate_workflows.py'
+      - 'scripts/validate-docs.py'
+      - 'scripts/test_validate_docs.py'
+      - 'THIRD_PARTY_NOTICES.md'
+      - 'CONTRIBUTING.md'
+      - 'stack/**'
+      - '.github/dependabot.yml'
       - 'src/ui-ux-pro-max/data/**'
       - 'src/ui-ux-pro-max/scripts/**'
       - 'src/ui-ux-pro-max/templates/**'
@@ -58,6 +64,11 @@ jobs:
         run: |
           python3 scripts/validate-workflows.py
           python3 -m unittest scripts/test_validate_workflows.py
+
+      - name: Validate docs
+        run: |
+          python3 scripts/validate-docs.py
+          python3 -m unittest scripts/test_validate_docs.py
 
       - name: Run aggregate offline data gate
         run: npm --prefix cli run verify:data
