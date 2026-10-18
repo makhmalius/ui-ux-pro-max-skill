@@ -13,6 +13,8 @@ import type { InstallAllResult } from '../utils/template.js';
 import { detectAIType, getAITypeDescription } from '../utils/detect.js';
 import { logger } from '../utils/logger.js';
 
+const NOTHING_INSTALLED = 'Nothing installed (already present; use --force to overwrite)';
+
 interface InitOptions {
   ai?: AIType;
   force?: boolean;
@@ -93,12 +95,20 @@ export async function initCommand(options: InitOptions): Promise<void> {
     logger.info('Planned install actions (nothing will be written):');
 
     if (aiType === 'all') {
-      const planned = await planAllPlatformInstallActions(cwd, isGlobal, options.force);
+      const { planned, failures } = await planAllPlatformInstallActions(cwd, isGlobal, options.force);
       planned.forEach((actions, type) => {
         console.log();
         console.log(chalk.bold(getAITypeDescription(type as AIType)));
         actions.forEach(action => console.log(`  ${chalk.cyan('·')} ${action}`));
       });
+      if (failures.length > 0) {
+        console.log();
+        logger.error('Failed platforms:');
+        failures.forEach(({ aiType: failedType, error }) => {
+          console.log(`  ${chalk.red('x')} ${failedType}: ${error}`);
+        });
+        process.exit(1);
+      }
     } else {
       const actions = await planPlatformInstallActions(cwd, aiType, isGlobal, options.force);
       actions.forEach(action => console.log(`  ${chalk.cyan('·')} ${action}`));
@@ -118,7 +128,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     if (result.failures.length > 0) {
       spinner.fail('Installation failed for some platforms');
     } else if (result.folders.length === 0) {
-      spinner.info('Nothing to install');
+      spinner.info(NOTHING_INSTALLED);
     } else {
       spinner.succeed('Generated from templates!');
     }
@@ -150,7 +160,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
     console.log();
     if (result.folders.length === 0) {
-      logger.warn('Nothing installed (already present; use --force to overwrite)');
+      logger.warn(NOTHING_INSTALLED);
       return;
     }
 

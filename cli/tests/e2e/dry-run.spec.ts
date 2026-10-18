@@ -16,8 +16,9 @@ test('dry-run plan lists the install actions for one platform', async () => {
   expect(joined).toContain(
     join(scratch, '.claude', 'skills', 'ui-ux-pro-max', 'SKILL.md')
   );
-  expect(joined).toContain('Would copy data + scripts:');
-  expect(joined).toContain('Would copy 6 sub-skills (');
+  expect(joined).toContain(`Would write: ${join(scratch, '.claude', 'skills', 'ui-ux-pro-max', 'data')}`);
+  expect(joined).toContain(`Would write: ${join(scratch, '.claude', 'skills', 'ui-ux-pro-max', 'scripts')}`);
+  expect(joined.match(/Would write: .*skills[\\/](banner-design|brand|design|design-system|slides|ui-styling)$/gm)).toHaveLength(6);
 });
 
 test('dry-run plan writes nothing to the target directory', async () => {
@@ -39,8 +40,9 @@ test('dry-run plan supports the zcode platform layout', async () => {
   expect(joined).toContain(
     join(scratch, '.zcode', 'skills', 'ui-ux-pro-max', 'SKILL.md')
   );
-  expect(joined).toContain('Would copy data + scripts:');
-  expect(joined).toContain('Would copy 6 sub-skills (');
+  expect(joined).toContain(`Would write: ${join(scratch, '.zcode', 'skills', 'ui-ux-pro-max', 'data')}`);
+  expect(joined).toContain(`Would write: ${join(scratch, '.zcode', 'skills', 'ui-ux-pro-max', 'scripts')}`);
+  expect(joined.match(/Would write: .*skills[\\/](banner-design|brand|design|design-system|slides|ui-styling)$/gm)).toHaveLength(6);
 });
 
 test('dry-run plan for all platforms covers every unique layout', async () => {
@@ -48,6 +50,7 @@ test('dry-run plan for all platforms covers every unique layout', async () => {
 
   const planned = await planAllPlatformInstallActions(scratch);
 
-  expect(planned.size).toBeGreaterThan(1);
-  expect(planned.get('claude')!.length).toBeGreaterThan(0);
+  expect(planned.failures).toEqual([]);
+  expect(planned.planned.size).toBeGreaterThan(1);
+  expect(planned.planned.get('claude')!.length).toBeGreaterThan(0);
 });

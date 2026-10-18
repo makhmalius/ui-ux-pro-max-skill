@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,7 @@ const CLI_ENTRY = join(CLI_ROOT, 'dist', 'index.js');
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(() => {
-  const build = spawnSync('npm', ['run', 'build'], { cwd: CLI_ROOT, encoding: 'utf-8' });
+  const build = spawnSync('npm run build', { cwd: CLI_ROOT, encoding: 'utf-8', shell: true });
   expect(build.status, build.stdout + build.stderr).toBe(0);
 });
 
@@ -106,4 +106,41 @@ test('init still accepts --offline and --token', async () => {
   const result = runCli(scratch, ['init', '--ai', 'claude', '--offline', '--token', 'x']);
 
   expect(result.status).toBe(0);
+});
+
+test('dry-run on a partial tree skips what exists per artifact and would write what is missing', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'uipro-dry-partial-'));
+  const skillDir = join(scratch, '.claude', 'skills', 'ui-ux-pro-max');
+  expect(runCli(scratch, ['init', '--ai', 'claude']).status).toBe(0);
+  await rm(join(skillDir, 'data'), { recursive: true, force: true });
+  await rm(join(scratch, '.claude', 'skills', 'design'), { recursive: true, force: true });
+
+  const result = runCli(scratch, ['init', '--ai', 'claude', '--dry-run']);
+
+  expect(result.status).toBe(0);
+  const lines = result.output.split('\n');
+  const has = (verb: string, path: string) =>
+    lines.some(l => l.includes(verb) && l.includes(path));
+  expect(has('Would skip', join(skillDir, 'SKILL.md'))).toBe(true);
+  expect(has('Would skip', join(skillDir, 'scripts'))).toBe(true);
+  expect(has('Would skip', join(scratch, '.claude', 'skills', 'brand'))).toBe(true);
+  expect(has('Would write', join(skillDir, 'data'))).toBe(true);
+  expect(has('Would write', join(scratch, '.claude', 'skills', 'design'))).toBe(true);
+  expect(has('Would write', join(skillDir, 'SKILL.md'))).toBe(false);
+  // dry-run must not create anything
+  expect(existsSync(join(skillDir, 'data'))).toBe(false);
+  expect((await readdir(join(scratch, '.claude', 'skills'))).includes('design')).toBe(false);
+});
+
+test('dry-run on a fully installed tree reports nothing to write', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'uipro-dry-full-'));
+  expect(runCli(scratch, ['init', '--ai', 'claude']).status).toBe(0);
+
+  const result = runCli(scratch, ['init', '--ai', 'claude', '--dry-run']);
+
+  expect(result.status).toBe(0);
+  expect(result.output).not.toContain('Would write');
+  expect(result.output).toContain('Would skip');
+  expect(result.output).toContain(`Would skip (exists, use --force): ${join(scratch, '.claude', 'skills', 'ui-ux-pro-max', 'scripts')}`);
+  expect(result.output).not.toContain('Would copy');
 });

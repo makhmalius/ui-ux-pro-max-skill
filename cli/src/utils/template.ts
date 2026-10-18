@@ -189,29 +189,60 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
-/**
- * Copy data and scripts to target directory. Each is decided on its own: an
- * existing directory is left alone unless `force`, a missing one (or a stale
- * non-directory pointer file) is (re)created. Returns the paths left alone.
- */
-async function copyDataAndScripts(targetSkillDir: string, force: boolean): Promise<string[]> {
-  const skipped: string[] = [];
+/** One thing an install writes, and whether this run will write or skip it. */
+export interface InstallArtifact {
+  kind: 'skill-file' | 'data' | 'scripts' | 'sub-skill';
+  /** Destination path. */
+  path: string;
+  /** Source inside the bundled assets (absent for the rendered SKILL.md). */
+  source?: string;
+  action: 'write' | 'skip';
+}
 
-  for (const name of ['data', 'scripts']) {
+/**
+ * The single place that decides, per artifact, whether an install writes or
+ * skips it. Used by the real install and by the --dry-run preview so they can
+ * never disagree. An existing artifact is skipped unless `force`; a stale
+ * non-directory at a data/scripts path counts as missing (it is replaced).
+ */
+async function decideInstall(
+  config: PlatformConfig,
+  targetDir: string,
+  isGlobal: boolean,
+  force: boolean
+): Promise<{ artifacts: InstallArtifact[]; paths: ReturnType<typeof resolveInstallPaths> }> {
+  const paths = resolveInstallPaths(config, targetDir, isGlobal);
+  const artifacts: InstallArtifact[] = [];
+
+  artifacts.push({
+    kind: 'skill-file',
+    path: paths.skillFilePath,
+    action: !force && (await exists(paths.skillFilePath)) ? 'skip' : 'write',
+  });
+
+  for (const name of ['data', 'scripts'] as const) {
     const source = join(ASSETS_DIR, name);
     if (!(await exists(source))) continue;
-
-    const target = join(targetSkillDir, name);
-    if (!force && (await isDirectory(target))) {
-      skipped.push(target);
-      continue;
-    }
-    await ensureCleanDir(target);
-    await mkdir(target, { recursive: true });
-    await cp(source, target, { recursive: true });
+    const path = join(paths.dataDir, name);
+    artifacts.push({
+      kind: name,
+      path,
+      source,
+      action: !force && (await isDirectory(path)) ? 'skip' : 'write',
+    });
   }
 
-  return skipped;
+  for (const name of await listBundledSubSkills()) {
+    const path = join(paths.skillsParentDir, name);
+    artifacts.push({
+      kind: 'sub-skill',
+      path,
+      source: join(ASSETS_DIR, 'skills', name),
+      action: !force && (await exists(path)) ? 'skip' : 'write',
+    });
+  }
+
+  return { artifacts, paths };
 }
 
 /**
@@ -223,35 +254,6 @@ export async function listBundledSubSkills(): Promise<string[]> {
   if (!(await exists(skillsSource))) return [];
   const entries = await readdir(skillsSource, { withFileTypes: true });
   return entries.filter(e => e.isDirectory()).map(e => e.name).sort();
-}
-
-/**
- * Install the bundled sub-skills as siblings of the orchestrator skill, so a
- * single `uipro init` delivers all 7 skills instead of only ui-ux-pro-max.
- * Existing sub-skill directories are left alone unless `force`; the paths left
- * alone are reported in `skipped`.
- */
-async function copySubSkills(
-  skillsParentDir: string,
-  force: boolean
-): Promise<{ installed: string[]; skipped: string[] }> {
-  const installed: string[] = [];
-  const skipped: string[] = [];
-  const skillsSource = join(ASSETS_DIR, 'skills');
-  if (!(await exists(skillsSource))) return { installed, skipped };
-
-  for (const name of await listBundledSubSkills()) {
-    const target = join(skillsParentDir, name);
-    if (await exists(target) && !force) {
-      skipped.push(target);
-      continue;
-    }
-    await mkdir(target, { recursive: true });
-    await cp(join(skillsSource, name), target, { recursive: true });
-    installed.push(target);
-  }
-
-  return { installed, skipped };
 }
 
 /**
@@ -327,38 +329,26 @@ export async function generatePlatformFiles(
   force = false
 ): Promise<InstallResult> {
   const config = await loadPlatformConfig(aiType);
-  const skipped: string[] = [];
-  let wrote = false;
-  const { skillDir, skillFilePath, dataDir, skillsParentDir } = resolveInstallPaths(
-    config,
-    targetDir,
-    isGlobal
-  );
+  const { artifacts, paths } = await decideInstall(config, targetDir, isGlobal, force);
+  const skipped = artifacts.filter(a => a.action === 'skip').map(a => a.path);
+  const toWrite = artifacts.filter(a => a.action === 'write');
 
   // Create directory structure
-  await mkdir(skillDir, { recursive: true });
+  await mkdir(paths.skillDir, { recursive: true });
+  await mkdir(paths.dataDir, { recursive: true });
 
-  // Render and write skill file (pass isGlobal to adjust paths)
-  if ((await exists(skillFilePath)) && !force) {
-    skipped.push(skillFilePath);
-  } else {
-    await writeFile(skillFilePath, await renderSkillFile(config, isGlobal), 'utf-8');
-    wrote = true;
+  for (const artifact of toWrite) {
+    if (artifact.kind === 'skill-file') {
+      await writeFile(artifact.path, await renderSkillFile(config, isGlobal), 'utf-8');
+      continue;
+    }
+    // Older installs can leave a plain "pointer" file where a directory belongs.
+    await ensureCleanDir(artifact.path);
+    await mkdir(artifact.path, { recursive: true });
+    await cp(artifact.source!, artifact.path, { recursive: true });
   }
 
-  await mkdir(dataDir, { recursive: true });
-  const dataSkipped = await copyDataAndScripts(dataDir, force);
-  skipped.push(...dataSkipped);
-  const dataScriptsTotal = ['data', 'scripts'].filter(n => existsSync(join(ASSETS_DIR, n))).length;
-  if (dataSkipped.length < dataScriptsTotal) wrote = true;
-
-  // Install the sibling sub-skills (banner-design, brand, design, ...) next to
-  // the orchestrator so all 7 skills are delivered.
-  const subSkills = await copySubSkills(skillsParentDir, force);
-  skipped.push(...subSkills.skipped);
-  if (subSkills.installed.length > 0) wrote = true;
-
-  return { folders: wrote ? [config.folderStructure.root] : [], skipped };
+  return { folders: toWrite.length > 0 ? [config.folderStructure.root] : [], skipped };
 }
 
 /**
@@ -372,25 +362,19 @@ export async function planPlatformInstallActions(
   force = false
 ): Promise<string[]> {
   const config = await loadPlatformConfig(aiType);
-  const { skillFilePath, dataDir, skillsParentDir } = resolveInstallPaths(config, targetDir, isGlobal);
+  const { artifacts } = await decideInstall(config, targetDir, isGlobal, force);
 
-  const actions: string[] = [];
-  const skillFileExists = await exists(skillFilePath);
-  actions.push(
-    skillFileExists && !force
-      ? `Would skip (exists, use --force): ${skillFilePath}`
-      : `Would write: ${skillFilePath}`
+  return artifacts.map(a =>
+    a.action === 'skip'
+      ? `Would skip (exists, use --force): ${a.path}`
+      : `Would write: ${a.path}`
   );
-  actions.push(`Would copy data + scripts: ${dataDir}`);
+}
 
-  const subSkills = await listBundledSubSkills();
-  if (subSkills.length > 0) {
-    actions.push(
-      `Would copy ${subSkills.length} sub-skills (${subSkills.join(', ')}): ${skillsParentDir}`
-    );
-  }
-
-  return actions;
+export interface PlanAllResult {
+  planned: Map<string, string[]>;
+  /** Platforms whose plan could not be built (same condition the real install reports). */
+  failures: { aiType: string; error: string }[];
 }
 
 /**
@@ -401,8 +385,9 @@ export async function planAllPlatformInstallActions(
   targetDir: string,
   isGlobal = false,
   force = false
-): Promise<Map<string, string[]>> {
+): Promise<PlanAllResult> {
   const planned = new Map<string, string[]>();
+  const failures: { aiType: string; error: string }[] = [];
   const generatedSkillFiles = new Set<string>();
 
   for (const aiType of Object.keys(AI_TO_PLATFORM)) {
@@ -417,12 +402,12 @@ export async function planAllPlatformInstallActions(
       generatedSkillFiles.add(skillFile);
 
       planned.set(aiType, await planPlatformInstallActions(targetDir, aiType, isGlobal, force));
-    } catch {
-      // Skip if config doesn't exist
+    } catch (error) {
+      failures.push({ aiType, error: error instanceof Error ? error.message : String(error) });
     }
   }
 
-  return planned;
+  return { planned, failures };
 }
 
 /**
