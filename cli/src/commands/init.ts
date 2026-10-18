@@ -110,8 +110,15 @@ export async function initCommand(options: InitOptions): Promise<void> {
         process.exit(1);
       }
     } else {
-      const actions = await planPlatformInstallActions(cwd, aiType, isGlobal, options.force);
-      actions.forEach(action => console.log(`  ${chalk.cyan('·')} ${action}`));
+      try {
+        const actions = await planPlatformInstallActions(cwd, aiType, isGlobal, options.force);
+        actions.forEach(action => console.log(`  ${chalk.cyan('·')} ${action}`));
+      } catch (error) {
+        console.log();
+        logger.error('Failed platforms:');
+        console.log(`  ${chalk.red('x')} ${aiType}: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
     }
 
     console.log();

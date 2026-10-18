@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { readFile, mkdir, writeFile, cp, access, readdir, lstat, rm } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, cp, access, readdir, lstat, stat, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, dirname, basename } from 'node:path';
 import { LEGACY_SKILL_HASHES } from './legacy-skill-hashes.js';
@@ -218,6 +218,31 @@ export interface InstallArtifact {
 }
 
 /**
+ * Throw what the real install's mkdir would throw when an ancestor of `dir`
+ * (up to, and excluding, `root`) exists but is not a directory. Symlinks to
+ * directories are followed, as mkdir does.
+ */
+async function assertNoFileAncestor(dir: string, root: string): Promise<void> {
+  const chain: string[] = [];
+  for (let current = dir; current !== root && current !== dirname(current); current = dirname(current)) {
+    chain.unshift(current);
+  }
+  for (const path of chain) {
+    let info;
+    try {
+      info = await stat(path);
+    } catch {
+      return; // Missing (or dangling): mkdir -p would create it.
+    }
+    if (!info.isDirectory()) {
+      const error = new Error(`ENOTDIR: not a directory, mkdir '${dir}'`) as NodeJS.ErrnoException;
+      error.code = 'ENOTDIR';
+      throw error;
+    }
+  }
+}
+
+/**
  * The single place that decides, per artifact, whether an install writes or
  * skips it. Used by the real install and by the --dry-run preview so they can
  * never disagree. An existing artifact is skipped unless `force`; a stale
@@ -231,6 +256,12 @@ async function decideInstall(
 ): Promise<{ artifacts: InstallArtifact[]; paths: ReturnType<typeof resolveInstallPaths> }> {
   const paths = resolveInstallPaths(config, targetDir, isGlobal);
   const artifacts: InstallArtifact[] = [];
+
+  // Fail here, before any write, exactly where the real install's mkdir would.
+  const root = isGlobal ? homedir() : targetDir;
+  for (const dir of [paths.skillDir, paths.dataDir, paths.skillsParentDir]) {
+    await assertNoFileAncestor(dir, root);
+  }
 
   artifacts.push({
     kind: 'skill-file',

@@ -17,12 +17,12 @@ test.beforeAll(() => {
   expect(build.status, build.stdout + build.stderr).toBe(0);
 });
 
-function runCli(cwd: string, args: string[]) {
+function runCli(cwd: string, args: string[], env: Record<string, string> = {}) {
   const result = spawnSync(process.execPath, [CLI_ENTRY, ...args], {
     cwd,
     encoding: 'utf-8',
     input: '',
-    env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+    env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0', ...env },
   });
   return {
     status: result.status,
@@ -143,4 +143,53 @@ test('dry-run on a fully installed tree reports nothing to write', async () => {
   expect(result.output).toContain('Would skip');
   expect(result.output).toContain(`Would skip (exists, use --force): ${join(scratch, '.claude', 'skills', 'ui-ux-pro-max', 'scripts')}`);
   expect(result.output).not.toContain('Would copy');
+});
+
+test('dry-run agrees with the real install when a platform dir is a plain file', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'uipro-dry-enotdir-'));
+  await writeFile(join(scratch, '.cursor'), 'not a directory');
+
+  const dry = runCli(scratch, ['init', '--ai', 'all', '--dry-run']);
+  expect(dry.status).toBe(1);
+  expect(dry.output).toContain('Failed platforms');
+  expect(dry.output).toContain('cursor');
+  expect(dry.output).toContain('ENOTDIR');
+  // The healthy platforms are still previewed.
+  expect(dry.output).toContain(join(scratch, '.claude', 'skills', 'ui-ux-pro-max', 'SKILL.md'));
+  expect(dry.output).not.toContain(`Would write: ${join(scratch, '.cursor')}`);
+
+  const real = runCli(scratch, ['init', '--ai', 'all']);
+  expect(real.status).toBe(1);
+  expect(real.output).toContain('ENOTDIR');
+});
+
+test('single-platform dry-run fails like the real install when its dir is a plain file', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'uipro-dry-enotdir-one-'));
+  await writeFile(join(scratch, '.cursor'), 'not a directory');
+
+  const dry = runCli(scratch, ['init', '--ai', 'cursor', '--dry-run']);
+  expect(dry.status).toBe(1);
+  expect(dry.output).toContain('cursor');
+  expect(dry.output).toContain('ENOTDIR');
+  expect(dry.output).not.toContain('Would write');
+
+  const real = runCli(scratch, ['init', '--ai', 'cursor']);
+  expect(real.status).toBe(1);
+  expect(real.output).toContain('ENOTDIR');
+});
+
+test('--global dry-run treats a plain-file platform dir in the home directory the same way', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'uipro-dry-enotdir-g-'));
+  const home = await mkdtemp(join(tmpdir(), 'uipro-home-'));
+  await writeFile(join(home, '.cursor'), 'not a directory');
+  const env = { HOME: home, USERPROFILE: home };
+
+  const dry = runCli(scratch, ['init', '--ai', 'all', '--global', '--dry-run'], env);
+  expect(dry.status).toBe(1);
+  expect(dry.output).toContain('Failed platforms');
+  expect(dry.output).toContain('cursor');
+
+  const real = runCli(scratch, ['init', '--ai', 'cursor', '--global'], env);
+  expect(real.status).toBe(1);
+  expect(real.output).toContain('ENOTDIR');
 });
