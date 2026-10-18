@@ -82,6 +82,18 @@ class ValidateDocs(unittest.TestCase):
     def test_caveman_agents_copy_must_match(self):
         self.assertRule(run_with({".agents/skills/caveman/SKILL.md": "different\n"}), "caveman-mirror")
 
+    def test_caveman_mirror_detects_crlf_difference(self):
+        t = GOOD[".claude/skills/caveman/SKILL.md"]
+        self.assertRule(run_with({".agents/skills/caveman/SKILL.md": t.replace("\n", "\r\n")}), "caveman-mirror")
+
+    def test_caveman_mirror_identical_pair_passes(self):
+        t = "Follow the `caveman` skill.\r\n"
+        self.assertEqual(run_with({".claude/skills/caveman/SKILL.md": t, ".agents/skills/caveman/SKILL.md": t}), [])
+
+    def test_caveman_removed_text_is_case_insensitive(self):
+        t = "status: caveman mode: unknown\n"
+        self.assertRule(run_with({".claude/skills/caveman/SKILL.md": t, ".agents/skills/caveman/SKILL.md": t}), "caveman-refs")
+
     def test_caveman_agents_copy_missing(self):
         self.assertRule(run_with({".agents/skills/caveman/SKILL.md": None}), "caveman-mirror")
 

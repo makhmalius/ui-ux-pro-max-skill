@@ -21,7 +21,7 @@ LITERAL_FILES = (
 SKILL_REF_RE = re.compile(r"`([a-z][a-z0-9-]*)`")
 
 
-REMOVED_STATUS_RE = re.compile(r"Caveman mode:\s*`?<?(?:mode|unknown)")
+REMOVED_STATUS_RE = re.compile(r"Caveman mode:\s*`?<?(?:mode|unknown)", re.I)
 
 
 def read(root, rel):
@@ -88,7 +88,9 @@ def validate(root):
         if REMOVED_STATUS_RE.search(cave):
             bad(rel, "caveman-refs", "references the removed hook status text 'Caveman mode: <mode>/unknown'")
     primary = read(root, caveman_files[0])
-    if primary is not None and read(root, caveman_files[1]) != primary:
+    # Compare raw bytes: read() translates CRLF to LF and would hide a line-ending drift.
+    raw = [(root / f).read_bytes() if (root / f).is_file() else None for f in caveman_files]
+    if primary is not None and raw[0] != raw[1]:
         bad(caveman_files[1], "caveman-mirror", f"must be byte-identical to {caveman_files[0]}")
     return out
 
