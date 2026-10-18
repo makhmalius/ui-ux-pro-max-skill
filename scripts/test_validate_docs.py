@@ -17,6 +17,7 @@ GOOD = {
     "src/ui-ux-pro-max/templates/base/quick-reference.md": "CLS < 0.1\n",
     "CONTRIBUTING.md": "tree without the bad dir\n",
     ".claude/skills/caveman/SKILL.md": "Follow the `caveman` skill.\n",
+    ".agents/skills/caveman/SKILL.md": "Follow the `caveman` skill.\n",
     ".claude/skills/brand/SKILL.md": "x\n",
 }
 
@@ -70,8 +71,24 @@ class ValidateDocs(unittest.TestCase):
     def test_caveman_missing_skill_ref(self):
         self.assertRule(run_with({".claude/skills/caveman/SKILL.md": "use the `ultracave` skill\n"}), "caveman-refs")
 
-    def test_caveman_hook_ref(self):
-        self.assertRule(run_with({".claude/skills/caveman/SKILL.md": "Relay the hook value\n"}), "caveman-refs")
+    def test_caveman_removed_hook_text(self):
+        t = "Relay the hook's `Caveman mode: <mode>` value, otherwise `Caveman mode: unknown`.\n"
+        self.assertRule(run_with({".claude/skills/caveman/SKILL.md": t, ".agents/skills/caveman/SKILL.md": t}), "caveman-refs")
+
+    def test_caveman_unrelated_hook_is_allowed(self):
+        t = "Follow the `caveman` skill. A git hook is unrelated.\n"
+        self.assertEqual(run_with({".claude/skills/caveman/SKILL.md": t, ".agents/skills/caveman/SKILL.md": t}), [])
+
+    def test_caveman_agents_copy_must_match(self):
+        self.assertRule(run_with({".agents/skills/caveman/SKILL.md": "different\n"}), "caveman-mirror")
+
+    def test_caveman_agents_copy_missing(self):
+        self.assertRule(run_with({".agents/skills/caveman/SKILL.md": None}), "caveman-mirror")
+
+    def test_caveman_refs_apply_to_agents_copy(self):
+        t = "use the `ultracave` skill\n"
+        self.assertRule(run_with({".claude/skills/caveman/SKILL.md": t, ".agents/skills/caveman/SKILL.md": t}), "caveman-refs")
+        self.assertRule(run_with({".agents/skills/caveman/SKILL.md": t}), "caveman-mirror")
 
     def test_real_repo_passes(self):
         self.assertEqual(vd.validate(Path(__file__).resolve().parent.parent), [])

@@ -22,7 +22,7 @@ holder for them beyond that author string.
 | `design` | `metadata.author: claudekit` (no URL recorded) | `license: MIT` (frontmatter) | None; no MIT text or copyright holder is recorded in repository; confirm with upstream | unknown |
 | `design-system` | `metadata.author: claudekit` (no URL recorded) | `license: MIT` (frontmatter) | None; no MIT text or copyright holder is recorded in repository; confirm with upstream | unknown |
 | `slides` | `metadata.author: claudekit` (no URL recorded) | not recorded in repository; confirm with upstream (no `license` field) | none | unknown |
-| `ui-styling` | `metadata.author: claudekit` (no URL recorded) | `license: MIT` (frontmatter) | See the note below: the directory contains an Apache-2.0 `LICENSE.txt` that conflicts with the frontmatter | unknown |
+| `ui-styling` | `metadata.author: claudekit` (no URL recorded) | `license: MIT` (frontmatter) | See the note below: the directory contains an Apache-2.0 `LICENSE.txt` that conflicts with the frontmatter | `references/canvas-design-system.md`, "Font integration": the line "Search `./canvas-fonts` directory" was reworded to say the bundled fonts ship only with the repository checkout, and otherwise a local font should be used or downloaded. Other changes: unknown |
 
 ### ui-styling: files with their own license text
 
@@ -44,9 +44,19 @@ holder for them beyond that author string.
 Modification: the sentence in the "Persistence" section of `SKILL.md` that told
 the reader to follow the `ultracave` or `megacave` skills and to relay a hook's
 `Caveman mode:` value was replaced, because those sibling skills and that hook
-are not part of this repository. The `README.md` next to it is unchanged and still
-describes those sibling skills. The `computedHash` in `skills-lock.json` is the
-hash recorded at install time and no longer matches the edited `SKILL.md`.
+are not part of this repository. The same edit is applied to both copies, which
+must stay byte-identical. The `README.md` next to it is unchanged and still
+describes those sibling skills.
+
+Lock file and updates:
+
+- The `computedHash` in `skills-lock.json` records the upstream file and
+  intentionally does not match the locally modified `SKILL.md`. `skills-lock.json`
+  is left unchanged.
+- Running a skills update or reinstall will overwrite `SKILL.md` and revert the
+  local edit; it must then be re-applied.
+- `scripts/validate-docs.py` (caveman reference and mirror rules, run in CI) fails
+  if the edit is reverted or the two copies diverge.
 
 ## Bundling
 

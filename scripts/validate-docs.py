@@ -21,6 +21,9 @@ LITERAL_FILES = (
 SKILL_REF_RE = re.compile(r"`([a-z][a-z0-9-]*)`")
 
 
+REMOVED_STATUS_RE = re.compile(r"Caveman mode:\s*`?<?(?:mode|unknown)")
+
+
 def read(root, rel):
     p = root / rel
     return p.read_text(encoding="utf-8") if p.is_file() else None
@@ -70,18 +73,23 @@ def validate(root):
         bad("CONTRIBUTING.md", "no-factory", "references nonexistent '.factory/'")
 
     skills_dir = root / ".claude" / "skills"
-    cave = read(root, ".claude/skills/caveman/SKILL.md")
-    if cave is not None:
-        existing = {p.name for p in skills_dir.iterdir() if p.is_dir()} if skills_dir.is_dir() else set()
+    caveman_files = (".claude/skills/caveman/SKILL.md", ".agents/skills/caveman/SKILL.md")
+    existing = {p.name for p in skills_dir.iterdir() if p.is_dir()} if skills_dir.is_dir() else set()
+    for rel in caveman_files:
+        cave = read(root, rel)
+        if cave is None:
+            continue
         for line in cave.splitlines():
             if not re.search(r"\bskills?\b", line):
                 continue
             for m in SKILL_REF_RE.finditer(line):
                 if m.group(1) not in existing:
-                    bad(".claude/skills/caveman/SKILL.md", "caveman-refs", f"references skill '{m.group(1)}' that is not under .claude/skills/")
-        for m in re.finditer(r"\bhook\b", cave):
-            bad(".claude/skills/caveman/SKILL.md", "caveman-refs", "references a hook that is not shipped here")
-            break
+                    bad(rel, "caveman-refs", f"references skill '{m.group(1)}' that is not under .claude/skills/")
+        if REMOVED_STATUS_RE.search(cave):
+            bad(rel, "caveman-refs", "references the removed hook status text 'Caveman mode: <mode>/unknown'")
+    primary = read(root, caveman_files[0])
+    if primary is not None and read(root, caveman_files[1]) != primary:
+        bad(caveman_files[1], "caveman-mirror", f"must be byte-identical to {caveman_files[0]}")
     return out
 
 
