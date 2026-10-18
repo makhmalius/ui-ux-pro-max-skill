@@ -21,10 +21,10 @@
     "claude",
     "cursor",
     "windsurf",
+    "antigravity",
     "copilot",
-    "kiro",
     "roocode",
-    "kilocode",
+    "kiro",
     "codex",
     "qoder",
     "gemini",
@@ -33,10 +33,12 @@
     "continue",
     "codebuddy",
     "droid",
+    "kilocode",
     "warp",
     "augment",
-    "antigravity",
-    "openclaw"
+    "codewhale",
+    "zcode",
+    "universal"
   ],
   "install": "npx ui-ux-pro-max-cli init --ai {{platform}}"
 }
