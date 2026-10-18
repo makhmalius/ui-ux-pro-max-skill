@@ -194,8 +194,8 @@ _STACK_QUERY_NAMES = {
 
 AVAILABLE_STACKS = list(STACK_CONFIG.keys())
 
-_INDEX_VERSION = 2
-_SEARCH_CALIBRATION_VERSION = "2026-08-12-v1"
+_INDEX_VERSION = 3
+_SEARCH_CALIBRATION_VERSION = "2026-10-18-v1"
 
 # Search calibration uses evidence coverage first; raw BM25 floors are kept
 # domain-specific because corpora vary greatly in size and document length.
@@ -411,6 +411,18 @@ def _query_coverage(index, query):
     return sum(token in vocabulary for token in tokens) / len(tokens)
 
 
+_EXACT_TERM_FIELDS = ("Keywords", "Aliases", "Icon Name", "Pattern ID",
+                      "Pattern Name", "Style ID", "Style Category")
+
+
+def _has_exact_term(index, row, tokens):
+    """True when a query token is a whole token of the row's keyword/identity fields."""
+    row_tokens = set()
+    for field in _EXACT_TERM_FIELDS:
+        row_tokens.update(index.tokenize(row.get(field, "")))
+    return any(token in row_tokens for token in tokens)
+
+
 def _search_csv_detailed(filepath, search_cols, output_cols, query, max_results,
                          threshold=None, routing_domain=None, row_filter=None,
                          cache_variant=""):
@@ -441,7 +453,26 @@ def _search_csv_detailed(filepath, search_cols, output_cols, query, max_results,
     top_score = ranked[0][1] if ranked else 0.0
     runner_up_score = ranked[1][1] if len(ranked) > 1 else 0.0
     coverage = _query_coverage(bm25, search_query)
-    abstain = (top_score <= threshold["min_score"]
+    query_tokens = set(bm25.tokenize(search_query))
+    # Tokens with no ASCII letter/digit (CJK, symbols) can never match the
+    # English-language corpus, so report them distinctly from a plain miss.
+    if not any(re.search(r"[a-z0-9]", token) for token in query_tokens):
+        return [], bm25, {
+            "normalized_query": _normalize(query), "search_query": search_query,
+            "query_rewrites": rewrites, "top_score": 0.0, "runner_up_score": 0.0,
+            "margin": 0.0, "token_coverage": 0.0, "abstained": True,
+            "calibration_version": _SEARCH_CALIBRATION_VERSION,
+            "reason": "no-searchable-terms"}
+    # The absolute score floor guards multi-term noise. A lone query term that is
+    # a whole keyword/identity token of a returned row is direct evidence, and BM25
+    # scores for one term in a small corpus are structurally low.
+    floor_applies = True
+    if len(query_tokens) == 1 and top_score > 0:
+        floor_applies = not any(
+            _has_exact_term(bm25, data[idx], query_tokens)
+            for idx, score in ranked[:max_results] if score > 0)
+    abstain = ((floor_applies and top_score <= threshold["min_score"])
+               or (top_score <= 0 and threshold["min_score"] <= 0)
                or coverage < threshold["min_coverage"]
                or (threshold["min_margin"] > 0
                    and top_score - runner_up_score < threshold["min_margin"]))
@@ -833,6 +864,8 @@ def search(query, domain=None, max_results=MAX_RESULTS, diagnostics=False):
         out["redirect"] = redirect
     if diagnostic.get("error"):
         out["error"] = diagnostic["error"]
+    if diagnostic.get("reason") == "no-searchable-terms":
+        out["no_searchable_terms"] = True
     if not results:
         if search_domain == "landing":
             out["suggestions"] = _suggest_identities(
@@ -985,6 +1018,8 @@ def search_stack(query, stack, max_results=MAX_RESULTS, diagnostics=False):
     }
     if diagnostic.get("error"):
         out["error"] = diagnostic["error"]
+    if diagnostic.get("reason") == "no-searchable-terms":
+        out["no_searchable_terms"] = True
     if not results:
         out["suggestions"] = _suggest_terms(
             bm25, query, threshold=threshold)

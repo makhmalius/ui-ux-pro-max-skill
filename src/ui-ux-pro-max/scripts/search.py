@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-UI/UX Pro Max Search - BM25 search engine for UI/UX style guides
+UI/UX Pro Max Search v2.13.0 - BM25 search engine for UI/UX style guides
 Usage: python search.py "<query>" [--domain <domain>] [--stack <stack>] [--max-results 3]
        python search.py "<query>" --design-system [-p "Project Name"]
        python search.py "<query>" --design-system --persist [-p "Project Name"] --output-dir "<project-root>" [--page "dashboard"]
@@ -28,15 +28,13 @@ Persistence (Master + Overrides pattern):
 import argparse
 import json as json_module
 import sys
-import io
 from core import CSV_CONFIG, AVAILABLE_STACKS, MAX_RESULTS, UNTRUNCATED_COLS, search, search_stack
 from design_system import generate_design_system
 
 # Force UTF-8 for stdout/stderr to handle emojis on Windows (cp1252 default)
-if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 TRUNCATE_AT = 300
 
@@ -68,6 +66,13 @@ def format_output(result, full=False):
                 "This legacy style label is now modeled in the "
                 f"`{redirect['domain']}` domain as `{redirect['id']}`. "
                 "Search that domain instead of treating a page composition as a visual style."
+            )
+            return "\n".join(output)
+        if result.get("no_searchable_terms"):
+            output.append(
+                "No searchable terms in query. The query contained no words the "
+                "database can index (for example only non-Latin text or stopwords). "
+                "Retry with English keywords."
             )
             return "\n".join(output)
         output.append(

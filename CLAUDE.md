@@ -26,7 +26,20 @@ python3 src/ui-ux-pro-max/scripts/search.py "<query>" --domain <domain> [-n <max
 - `google-fonts` - Individual Google Fonts lookup
 - `gsap` - GSAP animation skeletons by intensity tier (hover, scroll reveal, stagger, page transition, parallax, loading)
 
-**Design dials (optional, only with `--design-system`):**
+**Result count:** `-n` / `--max-results` accepts 1-20 (default 3).
+
+**Design system flags (with `--design-system`):**
+```bash
+python3 src/ui-ux-pro-max/scripts/search.py "<query>" --design-system [-p "Project Name"] [--format ascii|markdown] \
+    [--persist [--output-dir "<project-root>"] [--page "<page>"] [--force]]
+```
+- `--format` / `-f`: `ascii` (default) or `markdown`; ignored with `--json`
+- `--persist`: write `design-system/<project-slug>/MASTER.md`
+- `--page`: also write a page override under `design-system/<project-slug>/pages/`
+- `--output-dir` / `-o`: directory the `design-system/` folder is created under (default: cwd; pass the project root explicitly)
+- `--force`: overwrite an existing `MASTER.md`
+
+**Design dials (optional, only with `--design-system`; each takes an integer 1-10):**
 ```bash
 python3 src/ui-ux-pro-max/scripts/search.py "<query>" --design-system --variance <1-10> --motion <1-10> --density <1-10>
 ```
@@ -36,7 +49,7 @@ python3 src/ui-ux-pro-max/scripts/search.py "<query>" --design-system --variance
 ```bash
 python3 src/ui-ux-pro-max/scripts/search.py "<query>" --stack <stack>
 ```
-Available stacks: `html-tailwind` (default), `react`, `nextjs`, `astro`, `vue`, `nuxtjs`, `nuxt-ui`, `svelte`, `swiftui`, `react-native`, `flutter`, `shadcn`, `jetpack-compose`, `threejs`, `angular`, `laravel`, `javafx`, `wpf`, `winui`, `avalonia`, `uno`, `uwp`
+Without `--stack` no stack search runs; `html-tailwind` is the recommended default stack to pass when the project's stack is unknown. Available stacks: `html-tailwind`, `react`, `nextjs`, `astro`, `vue`, `nuxtjs`, `nuxt-ui`, `svelte`, `swiftui`, `react-native`, `flutter`, `shadcn`, `jetpack-compose`, `threejs`, `angular`, `laravel`, `javafx`, `wpf`, `winui`, `avalonia`, `uno`, `uwp`
 
 ## Architecture
 

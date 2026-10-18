@@ -20,7 +20,6 @@ import json
 import os
 import re
 import sys
-import io
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -28,10 +27,9 @@ from core import search, DATA_DIR
 from reasoning_contract import apply_decision_rules, parse_decision_rules
 
 # Force UTF-8 for stdout/stderr to handle emojis/box-drawing chars on Windows (cp1252 default)
-if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 # ============ CONFIGURATION ============
