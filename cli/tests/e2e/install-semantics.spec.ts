@@ -12,11 +12,6 @@ const CLI_ENTRY = join(CLI_ROOT, 'dist', 'index.js');
 
 test.describe.configure({ mode: 'serial' });
 
-test.beforeAll(() => {
-  const build = spawnSync('npm run build', { cwd: CLI_ROOT, encoding: 'utf-8', shell: true });
-  expect(build.status, build.stdout + build.stderr).toBe(0);
-});
-
 function runCli(cwd: string, args: string[], env: Record<string, string> = {}) {
   const result = spawnSync(process.execPath, [CLI_ENTRY, ...args], {
     cwd,

@@ -13,11 +13,6 @@ const SUB_SKILLS = ['banner-design', 'brand', 'design', 'design-system', 'slides
 
 test.describe.configure({ mode: 'serial' });
 
-test.beforeAll(() => {
-  const build = spawnSync('npm run build', { cwd: CLI_ROOT, encoding: 'utf-8', shell: true });
-  expect(build.status, build.stdout + build.stderr).toBe(0);
-});
-
 function runCli(cwd: string, args: string[], input = '') {
   const result = spawnSync(process.execPath, [CLI_ENTRY, ...args], {
     cwd,
